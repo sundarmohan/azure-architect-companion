@@ -29,6 +29,7 @@ def setup_catalog(db):
         category="management",
         description="Azure Resource Group",
         terraform_mapping={"terraform_type": "azurerm_resource_group", "provider": "azurerm"},
+        metadata={"scope": "subscription"},
     )
 
     # Create Virtual Network
@@ -249,6 +250,7 @@ class TestCatalogGetEndpoint:
         assert data["display_name"] == "Resource Group"
         assert data["provider"] == "azure"
         assert data["category"] == "management"
+        assert data["metadata"] == {"scope": "subscription"}
 
     def test_get_resource_type_with_dependencies(self, client: TestClient, setup_catalog):
         """Test getting a resource type with dependencies."""

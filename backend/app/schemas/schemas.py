@@ -231,6 +231,11 @@ class TerraformMappingResponse(BaseModel):
 class ResourceCatalogResponse(BaseModel):
     """Schema for resource catalog API response."""
 
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
     id: UUID
     provider: str
     resource_type: str
@@ -242,17 +247,23 @@ class ResourceCatalogResponse(BaseModel):
     properties_schema: Optional[dict]
     default_properties: Optional[dict]
     terraform_mapping: Optional[dict]
-    metadata: Optional[dict]
+    metadata: Optional[dict] = Field(
+        None,
+        validation_alias="resource_metadata",
+        serialization_alias="metadata",
+    )
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ResourceCatalogDetailResponse(BaseModel):
     """Schema for detailed resource catalog response including dependencies and hierarchy."""
 
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
     id: UUID
     provider: str
     resource_type: str
@@ -264,7 +275,11 @@ class ResourceCatalogDetailResponse(BaseModel):
     properties_schema: Optional[dict]
     default_properties: Optional[dict]
     terraform_mapping: Optional[dict]
-    metadata: Optional[dict]
+    metadata: Optional[dict] = Field(
+        None,
+        validation_alias="resource_metadata",
+        serialization_alias="metadata",
+    )
     required_dependencies: List[CatalogDependencyResponse]
     recommended_dependencies: List[CatalogDependencyResponse]
     optional_dependencies: List[CatalogDependencyResponse]
@@ -272,9 +287,6 @@ class ResourceCatalogDetailResponse(BaseModel):
     valid_child_types: List[str]
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ResourceCatalogListResponse(BaseModel):

@@ -424,7 +424,7 @@ def get_catalog_resource(
         properties_schema=resource.properties_schema,
         default_properties=resource.default_properties,
         terraform_mapping=resource.terraform_mapping,
-        metadata=resource.metadata,
+        metadata=resource.resource_metadata,
         required_dependencies=[CatalogDependencyResponse.model_validate(dep) for dep in required],
         recommended_dependencies=[CatalogDependencyResponse.model_validate(dep) for dep in recommended],
         optional_dependencies=[CatalogDependencyResponse.model_validate(dep) for dep in optional],

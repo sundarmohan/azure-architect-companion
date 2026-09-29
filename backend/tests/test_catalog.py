@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models import ResourceCatalog, CatalogDependency, CatalogHierarchy
+from app.models import Relationship
 from app.services import CatalogService
 
 
@@ -91,8 +92,16 @@ def sample_resources(db: Session):
 class TestCatalogRegistration:
     """Test resource catalog registration."""
 
+    def test_metadata_columns_use_safe_python_attributes(self):
+        """Model imports preserve metadata columns without reserved attributes."""
+        assert hasattr(Relationship, "relationship_metadata")
+        assert hasattr(ResourceCatalog, "resource_metadata")
+        assert "metadata" in Relationship.__table__.columns
+        assert "metadata" in ResourceCatalog.__table__.columns
+
     def test_register_resource_type(self, db: Session):
         """Test registering a resource type."""
+        metadata = {"service_tier": "platform"}
         resource = CatalogService.register_resource_type(
             db,
             provider="azure",
@@ -100,12 +109,14 @@ class TestCatalogRegistration:
             display_name="Virtual Machine",
             category="compute",
             description="A virtual machine",
+            metadata=metadata,
         )
 
         assert resource.provider == "azure"
         assert resource.resource_type == "microsoft.compute/virtualmachines"
         assert resource.display_name == "Virtual Machine"
         assert resource.category == "compute"
+        assert resource.resource_metadata == metadata
         assert resource.enabled is True
 
     def test_register_resource_with_terraform_mapping(self, db: Session):

@@ -325,7 +325,7 @@ class CatalogService:
             properties_schema=properties_schema,
             default_properties=default_properties,
             terraform_mapping=terraform_mapping,
-            metadata=metadata,
+            resource_metadata=metadata,
             enabled=True,
         )
         db.add(db_resource)

@@ -197,7 +197,7 @@ class ResourceCatalog(Base):
     properties_schema = Column(JSON, nullable=True)  # JSON schema for resource properties
     default_properties = Column(JSON, nullable=True)  # Default properties when creating this resource type
     terraform_mapping = Column(JSON, nullable=True)  # Terraform resource type mapping
-    metadata = Column(JSON, nullable=True)  # Additional metadata
+    resource_metadata = Column("metadata", JSON, nullable=True)  # Additional metadata
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

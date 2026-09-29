@@ -30,8 +30,8 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Check if docker-compose is available
-if ! command -v docker compose &> /dev/null; then
+# Check if Docker Compose is available
+if ! docker compose version &> /dev/null; then
     echo -e "${RED}Error: Docker Compose is not installed${NC}"
     exit 1
 fi
@@ -51,8 +51,8 @@ fi
 
 cd "$DEPLOYMENT_DIR"
 
-echo -e "${YELLOW}Step 1: Pulling Docker image${NC}"
-if docker pull "$DOCKER_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"; then
+echo -e "${YELLOW}Step 1: Pulling Docker images${NC}"
+if docker compose pull; then
     echo -e "${GREEN}✓ Image pulled successfully${NC}"
 else
     echo -e "${RED}✗ Failed to pull image${NC}"
@@ -60,16 +60,8 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}Step 2: Stopping existing containers${NC}"
-if docker compose down --remove-orphans; then
-    echo -e "${GREEN}✓ Existing containers stopped${NC}"
-else
-    echo -e "${YELLOW}⚠ No existing containers to stop${NC}"
-fi
-
-echo ""
-echo -e "${YELLOW}Step 3: Starting application with database migration${NC}"
-if docker compose up -d; then
+echo -e "${YELLOW}Step 2: Starting application with database migration${NC}"
+if docker compose up -d --remove-orphans; then
     echo -e "${GREEN}✓ Containers started${NC}"
 else
     echo -e "${RED}✗ Failed to start containers${NC}"
@@ -78,7 +70,7 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}Step 4: Waiting for application to be ready${NC}"
+echo -e "${YELLOW}Step 3: Waiting for application to be ready${NC}"
 
 # Wait for application to be ready
 RETRY_COUNT=0
