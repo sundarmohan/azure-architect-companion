@@ -45,6 +45,12 @@ def db(db_engine) -> Generator[Session, None, None]:
 
 
 @pytest.fixture(scope="function")
+def database_session(db: Session) -> Session:
+    """Compatibility alias for tests using the database_session fixture name."""
+    return db
+
+
+@pytest.fixture(scope="function")
 def client(db: Session):
     """Create a test client with test database."""
     def override_get_db():

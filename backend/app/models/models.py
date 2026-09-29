@@ -11,7 +11,7 @@ from sqlalchemy import (
     String,
     DateTime,
     ForeignKey,
-    UUID,
+    Uuid,
     JSON,
     Boolean,
     Text,
@@ -26,7 +26,7 @@ class Architecture(Base):
 
     __tablename__ = "architectures"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     provider = Column(String(50), nullable=False)  # e.g., "azure"
@@ -49,8 +49,8 @@ class ArchitectureVersion(Base):
 
     __tablename__ = "architecture_versions"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    architecture_id = Column(UUID(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_id = Column(Uuid(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
     version_number = Column(String(50), nullable=False)  # e.g., "1.0", "2.1"
     status = Column(String(50), nullable=False, default="draft")  # draft, validated, deployed
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
@@ -83,8 +83,8 @@ class Resource(Base):
 
     __tablename__ = "resources"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    architecture_version_id = Column(UUID(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
     resource_key = Column(String(255), nullable=False)  # Unique identifier within the version
     resource_type = Column(String(255), nullable=False, index=True)  # e.g., "microsoft.compute/virtualmachines"
     name = Column(String(255), nullable=False)
@@ -92,7 +92,7 @@ class Resource(Base):
     sku = Column(JSON, nullable=True)  # e.g., {"tier": "Standard", "name": "Standard_B1s"}
     properties = Column(JSON, nullable=True)  # Resource-specific properties
     tags = Column(JSON, nullable=True)  # Resource tags
-    parent_resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=True)  # Hierarchy
+    parent_resource_id = Column(Uuid(as_uuid=True), ForeignKey("resources.id"), nullable=True)  # Hierarchy
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -114,10 +114,10 @@ class Relationship(Base):
 
     __tablename__ = "relationships"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    architecture_version_id = Column(UUID(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
-    source_resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
-    target_resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    source_resource_id = Column(Uuid(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
+    target_resource_id = Column(Uuid(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
     relationship_type = Column(String(100), nullable=False)  # e.g., "connects_to", "uses", "protects"
     relationship_metadata = Column("metadata", JSON, nullable=True)  # Additional relationship metadata
 
@@ -143,10 +143,10 @@ class Dependency(Base):
 
     __tablename__ = "dependencies"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    architecture_version_id = Column(UUID(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
-    resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
-    depends_on_resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    resource_id = Column(Uuid(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
+    depends_on_resource_id = Column(Uuid(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
     dependency_type = Column(String(100), nullable=False)  # e.g., "requires", "waits_for", "needs"
     required = Column(Boolean, nullable=False, default=True)  # Whether this dependency is required
     reason = Column(Text, nullable=True)  # Human-readable reason for the dependency
@@ -186,7 +186,7 @@ class ResourceCatalog(Base):
 
     __tablename__ = "resource_catalog"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     provider = Column(String(50), nullable=False, index=True)  # e.g., "azure", "aws"
     resource_type = Column(String(255), nullable=False, index=True)  # e.g., "microsoft.compute/virtualmachines"
     display_name = Column(String(255), nullable=False)  # e.g., "Virtual Machine"
@@ -254,8 +254,8 @@ class CatalogDependency(Base):
 
     __tablename__ = "catalog_dependencies"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    resource_type_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    resource_type_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
     depends_on_resource_type = Column(String(255), nullable=False)  # The resource type this depends on
     dependency_classification = Column(String(20), nullable=False)  # "REQUIRED", "RECOMMENDED", "OPTIONAL"
     reason = Column(Text, nullable=True)  # Why this dependency exists
@@ -274,9 +274,9 @@ class CatalogHierarchy(Base):
 
     __tablename__ = "catalog_hierarchy"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    parent_resource_type_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
-    child_resource_type_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    parent_resource_type_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    child_resource_type_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
     description = Column(Text, nullable=True)  # e.g., "VNet must be contained in a Resource Group"
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -289,8 +289,8 @@ class CatalogNetworkingRequirement(Base):
 
     __tablename__ = "catalog_networking_requirements"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    resource_catalog_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    resource_catalog_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
     requirement = Column(Text, nullable=False)  # e.g., "Must be deployed in a VNet"
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -306,8 +306,8 @@ class CatalogSecurityRequirement(Base):
 
     __tablename__ = "catalog_security_requirements"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    resource_catalog_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    resource_catalog_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
     requirement = Column(Text, nullable=False)  # e.g., "Must use HTTPS/TLS", "Requires NSG"
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -323,8 +323,8 @@ class CatalogMonitoringRequirement(Base):
 
     __tablename__ = "catalog_monitoring_requirements"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    resource_catalog_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    resource_catalog_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
     requirement = Column(Text, nullable=False)  # e.g., "Recommended to enable diagnostic settings"
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -340,8 +340,8 @@ class CatalogBackupRequirement(Base):
 
     __tablename__ = "catalog_backup_requirements"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    resource_catalog_id = Column(UUID(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    resource_catalog_id = Column(Uuid(as_uuid=True), ForeignKey("resource_catalog.id"), nullable=False, index=True)
     requirement = Column(Text, nullable=False)  # e.g., "Recommended to enable automated backups"
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -360,7 +360,7 @@ class ComplianceFramework(Base):
 
     __tablename__ = "compliance_frameworks"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     framework_name = Column(String(100), nullable=False, unique=True, index=True)  # HIPAA, GDPR, etc.
     framework_version = Column(String(50), nullable=False)  # Version of the framework profile
     display_name = Column(String(255), nullable=False)  # Full name for display
@@ -385,8 +385,8 @@ class ComplianceControl(Base):
 
     __tablename__ = "compliance_controls"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    framework_id = Column(UUID(as_uuid=True), ForeignKey("compliance_frameworks.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    framework_id = Column(Uuid(as_uuid=True), ForeignKey("compliance_frameworks.id"), nullable=False, index=True)
     control_code = Column(String(100), nullable=False)  # e.g., HIPAA-TECH-001
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -413,8 +413,8 @@ class ComplianceControlPolicy(Base):
 
     __tablename__ = "compliance_control_policies"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    control_id = Column(UUID(as_uuid=True), ForeignKey("compliance_controls.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    control_id = Column(Uuid(as_uuid=True), ForeignKey("compliance_controls.id"), nullable=False, index=True)
     policy_level = Column(String(50), nullable=False)  # BLOCK, REQUIRED, RECOMMENDATION
     default_enabled = Column(Boolean, nullable=False, default=True)
     description = Column(Text, nullable=True)
