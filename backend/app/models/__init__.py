@@ -8,6 +8,13 @@ from .models import (
     Resource,
     Relationship,
     Dependency,
+    ResourceCatalog,
+    CatalogDependency,
+    CatalogHierarchy,
+    CatalogNetworkingRequirement,
+    CatalogSecurityRequirement,
+    CatalogMonitoringRequirement,
+    CatalogBackupRequirement,
 )
 
 __all__ = [
@@ -16,4 +23,11 @@ __all__ = [
     "Resource",
     "Relationship",
     "Dependency",
+    "ResourceCatalog",
+    "CatalogDependency",
+    "CatalogHierarchy",
+    "CatalogNetworkingRequirement",
+    "CatalogSecurityRequirement",
+    "CatalogMonitoringRequirement",
+    "CatalogBackupRequirement",
 ]

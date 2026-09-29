@@ -187,3 +187,276 @@ class DependencyResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ==================== Resource Catalog Schemas ====================
+
+
+class CatalogDependencyResponse(BaseModel):
+    """Schema for catalog dependency API response."""
+
+    id: UUID
+    depends_on_resource_type: str
+    dependency_classification: str  # "REQUIRED", "RECOMMENDED", "OPTIONAL"
+    reason: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CatalogHierarchyResponse(BaseModel):
+    """Schema for catalog hierarchy API response."""
+
+    parent_resource_type: str
+    child_resource_type: str
+    description: Optional[str]
+
+
+class TerraformMappingResponse(BaseModel):
+    """Schema for Terraform mapping API response."""
+
+    resource_type: str
+    terraform_type: Optional[str]
+    provider: Optional[str]
+    additional_mapping: Optional[dict]
+
+
+class ResourceCatalogResponse(BaseModel):
+    """Schema for resource catalog API response."""
+
+    id: UUID
+    provider: str
+    resource_type: str
+    display_name: str
+    category: str
+    description: Optional[str]
+    version: str
+    enabled: bool
+    properties_schema: Optional[dict]
+    default_properties: Optional[dict]
+    terraform_mapping: Optional[dict]
+    metadata: Optional[dict]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ResourceCatalogDetailResponse(BaseModel):
+    """Schema for detailed resource catalog response including dependencies and hierarchy."""
+
+    id: UUID
+    provider: str
+    resource_type: str
+    display_name: str
+    category: str
+    description: Optional[str]
+    version: str
+    enabled: bool
+    properties_schema: Optional[dict]
+    default_properties: Optional[dict]
+    terraform_mapping: Optional[dict]
+    metadata: Optional[dict]
+    required_dependencies: List[CatalogDependencyResponse]
+    recommended_dependencies: List[CatalogDependencyResponse]
+    optional_dependencies: List[CatalogDependencyResponse]
+    valid_parent_types: List[str]
+    valid_child_types: List[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ResourceCatalogListResponse(BaseModel):
+    """Schema for listing resource catalogs."""
+
+    total: int
+    resources: List[ResourceCatalogResponse]
+
+
+class CatalogDependenciesResponse(BaseModel):
+    """Schema for dependencies of a resource type."""
+
+    resource_type: str
+    required: List[CatalogDependencyResponse]
+    recommended: List[CatalogDependencyResponse]
+    optional: List[CatalogDependencyResponse]
+
+
+class CatalogCategoriesResponse(BaseModel):
+    """Schema for listing categories."""
+
+    categories: List[str]
+
+
+# ==================== Dependency Analysis Schemas ====================
+
+
+class DependencyFindingResponse(BaseModel):
+    """Schema for a single dependency finding from the Dependency Engine."""
+
+    architecture_id: UUID
+    architecture_version_id: UUID
+    source_resource_id: UUID
+    source_resource_key: str
+    source_resource_type: str
+    dependency_resource_type: Optional[str]  # Null for CATALOG_RESOURCE_TYPE_UNKNOWN
+    classification: str  # "REQUIRED", "RECOMMENDED", "OPTIONAL", "UNKNOWN"
+    status: str  # "SATISFIED", "MISSING", "CATALOG_RESOURCE_TYPE_UNKNOWN"
+    reason: Optional[str] = None
+    matched_resource_id: Optional[UUID] = None  # The resource that satisfies the dependency, if satisfied
+    matched_resource_key: Optional[str] = None
+    catalog_dependency_id: Optional[UUID] = None
+
+
+class ArchitectureDependencyAnalysisResponse(BaseModel):
+    """Schema for full dependency analysis of an architecture version."""
+
+    architecture_id: UUID
+    architecture_version_id: UUID
+    total_findings: int
+    required_findings: int
+    recommended_findings: int
+    optional_findings: int
+    satisfied_count: int
+    missing_count: int
+    findings: List[DependencyFindingResponse]
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== VALIDATION ENGINE SCHEMAS ====================
+
+
+class ValidationFindingResponse(BaseModel):
+    """Schema for a single validation finding."""
+    
+    architecture_id: UUID
+    architecture_version_id: UUID
+    severity: str  # "ERROR", "WARNING", "INFO"
+    category: str  # "RESOURCE", "HIERARCHY", "DEPENDENCY", "RELATIONSHIP", "CATALOG"
+    code: str  # Machine-readable code (e.g., "RESOURCE_TYPE_NOT_IN_CATALOG")
+    message: str  # Human-readable message
+    resource_id: Optional[UUID] = None  # The primary resource involved
+    related_resource_id: Optional[UUID] = None  # Secondary resource if applicable
+    details: Optional[dict] = None  # Additional structured data
+    
+    class Config:
+        from_attributes = True
+
+
+class ArchitectureValidationResponse(BaseModel):
+    """Schema for architecture version validation results."""
+    
+    architecture_id: UUID
+    architecture_version_id: UUID
+    status: str  # "VALID" or "INVALID"
+    error_count: int
+    warning_count: int
+    info_count: int
+    total_findings: int
+    findings: List[ValidationFindingResponse]
+    
+    class Config:
+        from_attributes = True
+
+
+# ==================== COMPLIANCE ENGINE SCHEMAS ====================
+
+
+class ComplianceFrameworkResponse(BaseModel):
+    """Schema for compliance framework metadata."""
+    
+    id: UUID
+    framework_name: str
+    framework_version: str
+    display_name: str
+    description: Optional[str]
+    enabled: bool
+    
+    class Config:
+        from_attributes = True
+
+
+class ComplianceControlResponse(BaseModel):
+    """Schema for compliance control metadata."""
+    
+    id: UUID
+    framework_id: UUID
+    control_code: str
+    title: str
+    description: Optional[str]
+    category: str
+    evaluation_type: str
+    rule_version: str
+    enabled: bool
+    
+    class Config:
+        from_attributes = True
+
+
+class ComplianceFindingResponse(BaseModel):
+    """Schema for a single compliance control finding."""
+    
+    framework_id: UUID
+    framework_name: str
+    framework_version: str
+    control_id: UUID
+    control_code: str
+    title: str
+    category: str
+    outcome: str  # PASS, FAIL, WARNING, RECOMMENDATION, NOT_EVALUATED
+    policy_level: str  # BLOCK, REQUIRED, RECOMMENDATION
+    message: str
+    resource_id: Optional[UUID] = None
+    related_resource_id: Optional[UUID] = None
+    evidence: Optional[dict] = None
+    rule_version: str
+    
+    class Config:
+        from_attributes = True
+
+
+class ComplianceFrameworkEvaluationResponse(BaseModel):
+    """Schema for compliance evaluation results for a single framework."""
+    
+    architecture_id: UUID
+    architecture_version_id: UUID
+    framework_id: UUID
+    framework_name: str
+    framework_version: str
+    overall_status: str  # PASSED, FAILED, REVIEW, BLOCKED, VALIDATION_BLOCKED
+    total_controls: int
+    passed_controls: int
+    failed_controls: int
+    warning_controls: int
+    recommendation_controls: int
+    not_evaluated_controls: int
+    findings: List[ComplianceFindingResponse]
+    
+    class Config:
+        from_attributes = True
+
+
+class ComplianceEvaluationRequest(BaseModel):
+    """Schema for compliance evaluation request."""
+    
+    frameworks: List[str]  # Framework names: HIPAA, GDPR, etc.
+
+
+class ComplianceEvaluationResponse(BaseModel):
+    """Schema for compliance evaluation results (multiple frameworks)."""
+    
+    architecture_id: UUID
+    architecture_version_id: UUID
+    requested_frameworks: List[str]
+    evaluations: List[ComplianceFrameworkEvaluationResponse]
+    timestamp: datetime
+    
+    class Config:
+        from_attributes = True

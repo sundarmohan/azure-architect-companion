@@ -1,0 +1,74 @@
+# Git
+.git
+.gitignore
+.github
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache
+pytest_cache
+.pytest_cache/
+*.pytest_cache
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+local_database
+
+# Logs
+*.log
+logs/
+
+# Build
+build/
+dist/
+*.egg-info/
+*.eggs
+
+# Testing artifacts
+htmlcov/
+.tox/
+
+# Misc
+.editorconfig
+Makefile
+docker-compose.override.yml
+README.md
+DEPLOYMENT.md
+QUALITY_GATE.md
+MILESTONE_*.md

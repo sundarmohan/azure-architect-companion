@@ -8,6 +8,11 @@ from .services import (
     ResourceService,
     RelationshipService,
     DependencyService,
+    CatalogService,
+    DependencyEngine,
+    ValidationEngine,
+    ComplianceFrameworkService,
+    ComplianceEngine,
 )
 
 __all__ = [
@@ -16,4 +21,9 @@ __all__ = [
     "ResourceService",
     "RelationshipService",
     "DependencyService",
+    "CatalogService",
+    "DependencyEngine",
+    "ValidationEngine",
+    "ComplianceFrameworkService",
+    "ComplianceEngine",
 ]
