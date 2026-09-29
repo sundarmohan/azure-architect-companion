@@ -38,7 +38,6 @@ def setup_catalog(db):
         description="Azure Resource Group",
         terraform_mapping={"terraform_type": "azurerm_resource_group", "provider": "azurerm"},
         metadata={"scope": "subscription"},
-        metadata={"scope": "subscription"},
     )
 
     # Create Virtual Network
