@@ -15,6 +15,9 @@ from .models import (
     CatalogSecurityRequirement,
     CatalogMonitoringRequirement,
     CatalogBackupRequirement,
+    ComplianceFramework,
+    ComplianceControl,
+    ComplianceControlPolicy,
 )
 
 __all__ = [
@@ -30,4 +33,7 @@ __all__ = [
     "CatalogSecurityRequirement",
     "CatalogMonitoringRequirement",
     "CatalogBackupRequirement",
+    "ComplianceFramework",
+    "ComplianceControl",
+    "ComplianceControlPolicy",
 ]
