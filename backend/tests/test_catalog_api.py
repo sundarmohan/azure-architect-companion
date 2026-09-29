@@ -7,14 +7,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.db.session import get_db
 from app.services import CatalogService
 
 
 @pytest.fixture
-def client():
+def client(db):
     """Create a test client."""
     app = create_app()
-    return TestClient(app)
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -29,6 +37,7 @@ def setup_catalog(db):
         category="management",
         description="Azure Resource Group",
         terraform_mapping={"terraform_type": "azurerm_resource_group", "provider": "azurerm"},
+        metadata={"scope": "subscription"},
         metadata={"scope": "subscription"},
     )
 
@@ -250,6 +259,7 @@ class TestCatalogGetEndpoint:
         assert data["display_name"] == "Resource Group"
         assert data["provider"] == "azure"
         assert data["category"] == "management"
+        assert data["metadata"] == {"scope": "subscription"}
         assert data["metadata"] == {"scope": "subscription"}
 
     def test_get_resource_type_with_dependencies(self, client: TestClient, setup_catalog):

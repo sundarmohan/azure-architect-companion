@@ -83,9 +83,9 @@ def version(db_session: Session, architecture: Architecture):
     """Create an architecture version."""
     ver = ArchitectureVersionService.create(
         db_session,
+        architecture.id,
         ArchitectureVersionCreate(
-            architecture_id=architecture.id,
-            version_number=1,
+            version_number="1",
         ),
     )
     return ver
@@ -96,11 +96,11 @@ def resource_group(db_session: Session, version: ArchitectureVersion):
     """Create a ResourceGroup resource."""
     return ResourceService.create(
         db_session,
+        version.id,
         ResourceCreate(
-            architecture_version_id=version.id,
             resource_type="ResourceGroup",
             resource_key="rg-test",
-            resource_name="Test RG",
+            name="Test RG",
             properties={},
         ),
     )
@@ -111,11 +111,11 @@ def storage_with_encryption(db_session: Session, version: ArchitectureVersion, r
     """Create a StorageAccount with encryption enabled."""
     return ResourceService.create(
         db_session,
+        version.id,
         ResourceCreate(
-            architecture_version_id=version.id,
             resource_type="StorageAccount",
             resource_key="sa-encrypted",
-            resource_name="Encrypted Storage",
+            name="Encrypted Storage",
             parent_resource_id=resource_group.id,
             properties={"encryption_enabled": True},
         ),
@@ -127,11 +127,11 @@ def storage_without_encryption(db_session: Session, version: ArchitectureVersion
     """Create a StorageAccount with encryption disabled."""
     return ResourceService.create(
         db_session,
+        version.id,
         ResourceCreate(
-            architecture_version_id=version.id,
             resource_type="StorageAccount",
             resource_key="sa-plain",
-            resource_name="Unencrypted Storage",
+            name="Unencrypted Storage",
             parent_resource_id=resource_group.id,
             properties={"encryption_enabled": False},
         ),
@@ -306,11 +306,11 @@ class TestControlOutcomes:
         # Storage with no encryption property specified
         storage = ResourceService.create(
             db_session,
+            version.id,
             ResourceCreate(
-                architecture_version_id=version.id,
                 resource_type="StorageAccount",
                 resource_key="sa-unknown",
-                resource_name="Unknown Encryption",
+                name="Unknown Encryption",
                 parent_resource_id=resource_group.id,
                 properties={},  # No encryption property
             ),
@@ -338,11 +338,11 @@ class TestControlOutcomes:
         # Create VM without NSG
         vm = ResourceService.create(
             db_session,
+            version.id,
             ResourceCreate(
-                architecture_version_id=version.id,
                 resource_type="VirtualMachine",
                 resource_key="vm-test",
-                resource_name="Test VM",
+                name="Test VM",
                 parent_resource_id=resource_group.id,
                 properties={},
             ),
@@ -377,11 +377,11 @@ class TestValidationGate:
         # Create resource with unknown type to trigger validation error
         ResourceService.create(
             db_session,
+            version.id,
             ResourceCreate(
-                architecture_version_id=version.id,
                 resource_type="UnknownResourceType",
                 resource_key="bad-resource",
-                resource_name="Bad Resource",
+                name="Bad Resource",
                 properties={},
             ),
         )
@@ -526,20 +526,20 @@ class TestVersionIsolation:
         # Create second version
         version2 = ArchitectureVersionService.create(
             db_session,
+            architecture.id,
             ArchitectureVersionCreate(
-                architecture_id=architecture.id,
-                version_number=2,
+                version_number="2",
             ),
         )
         
         # Create different resource in version 2
         rg2 = ResourceService.create(
             db_session,
+            version2.id,
             ResourceCreate(
-                architecture_version_id=version2.id,
                 resource_type="ResourceGroup",
                 resource_key="rg-test-2",
-                resource_name="Test RG 2",
+                name="Test RG 2",
                 properties={},
             ),
         )
@@ -569,9 +569,9 @@ class TestVersionIsolation:
         )
         ver2 = ArchitectureVersionService.create(
             db_session,
+            arch2.id,
             ArchitectureVersionCreate(
-                architecture_id=arch2.id,
-                version_number=1,
+                version_number="1",
             ),
         )
         
@@ -660,11 +660,11 @@ class TestResourceTypes:
         """Test: Unknown resource types are handled gracefully."""
         ResourceService.create(
             db_session,
+            version.id,
             ResourceCreate(
-                architecture_version_id=version.id,
                 resource_type="UnknownType",
                 resource_key="unknown",
-                resource_name="Unknown",
+                name="Unknown",
                 parent_resource_id=resource_group.id,
                 properties={},
             ),
@@ -875,11 +875,11 @@ class TestIntegration:
         # Add network security
         nsg = ResourceService.create(
             db_session,
+            version.id,
             ResourceCreate(
-                architecture_version_id=version.id,
                 resource_type="NetworkSecurityGroup",
                 resource_key="nsg-test",
-                resource_name="Test NSG",
+                name="Test NSG",
                 parent_resource_id=resource_group.id,
                 properties={},
             ),
@@ -888,11 +888,11 @@ class TestIntegration:
         # Add monitoring
         monitor = ResourceService.create(
             db_session,
+            version.id,
             ResourceCreate(
-                architecture_version_id=version.id,
                 resource_type="Monitor",
                 resource_key="monitor-test",
-                resource_name="Test Monitor",
+                name="Test Monitor",
                 parent_resource_id=resource_group.id,
                 properties={},
             ),

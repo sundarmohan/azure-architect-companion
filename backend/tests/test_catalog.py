@@ -145,7 +145,8 @@ class TestCatalogLookup:
     def test_get_resource_type(self, db: Session, sample_resources):
         """Test getting a resource type by name."""
         resource = CatalogService.get_resource_type(db, "microsoft.compute/virtualmachines")
-        assert resource is None  # VM not in sample_resources
+        assert resource is not None
+        assert resource.display_name == "Virtual Machine"
 
         resource = CatalogService.get_resource_type(db, "microsoft.resources/resourcegroups")
         assert resource is not None
@@ -336,8 +337,8 @@ class TestCatalogTerraform:
     def test_get_terraform_mapping(self, db: Session, sample_resources):
         """Test getting Terraform mapping for a resource type."""
         mapping = CatalogService.get_terraform_mapping(db, "microsoft.compute/virtualmachines")
-        # VM not in sample_resources, so should return None
-        assert mapping is None
+        assert mapping is not None
+        assert mapping.get("terraform_type") == "azurerm_windows_virtual_machine"
 
         mapping = CatalogService.get_terraform_mapping(db, "microsoft.resources/resourcegroups")
         assert mapping is not None
