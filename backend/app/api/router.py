@@ -393,7 +393,53 @@ def list_catalog_resources(
     return ResourceCatalogListResponse(total=len(resources), resources=resources)
 
 
-@router.get("/catalog/resources/{resource_type}", response_model=ResourceCatalogDetailResponse)
+@router.get("/catalog/resources/{resource_type:path}/dependencies", response_model=CatalogDependenciesResponse)
+def get_resource_dependencies(
+    resource_type: str,
+    db: Session = Depends(get_db),
+) -> CatalogDependenciesResponse:
+    """Get dependencies for a resource type."""
+    if not CatalogService.resource_type_exists(db, resource_type):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Resource type {resource_type} not found in catalog",
+        )
+
+    required = CatalogService.get_required_dependencies(db, resource_type)
+    recommended = CatalogService.get_recommended_dependencies(db, resource_type)
+    optional = CatalogService.get_optional_dependencies(db, resource_type)
+
+    return CatalogDependenciesResponse(
+        resource_type=resource_type,
+        required=[CatalogDependencyResponse.model_validate(dep) for dep in required],
+        recommended=[CatalogDependencyResponse.model_validate(dep) for dep in recommended],
+        optional=[CatalogDependencyResponse.model_validate(dep) for dep in optional],
+    )
+
+
+@router.get("/catalog/resources/{resource_type:path}/terraform", response_model=TerraformMappingResponse)
+def get_resource_terraform_mapping(
+    resource_type: str,
+    db: Session = Depends(get_db),
+) -> TerraformMappingResponse:
+    """Get Terraform mapping for a resource type."""
+    resource = CatalogService.get_resource_type(db, resource_type)
+    if not resource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Resource type {resource_type} not found in catalog",
+        )
+
+    terraform_mapping = resource.terraform_mapping or {}
+    return TerraformMappingResponse(
+        resource_type=resource_type,
+        terraform_type=terraform_mapping.get("terraform_type"),
+        provider=terraform_mapping.get("provider"),
+        additional_mapping=terraform_mapping.get("additional_mapping"),
+    )
+
+
+@router.get("/catalog/resources/{resource_type:path}", response_model=ResourceCatalogDetailResponse)
 def get_catalog_resource(
     resource_type: str,
     db: Session = Depends(get_db),
@@ -432,52 +478,6 @@ def get_catalog_resource(
         valid_child_types=valid_children,
         created_at=resource.created_at,
         updated_at=resource.updated_at,
-    )
-
-
-@router.get("/catalog/resources/{resource_type}/dependencies", response_model=CatalogDependenciesResponse)
-def get_resource_dependencies(
-    resource_type: str,
-    db: Session = Depends(get_db),
-) -> CatalogDependenciesResponse:
-    """Get dependencies for a resource type."""
-    if not CatalogService.resource_type_exists(db, resource_type):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Resource type {resource_type} not found in catalog",
-        )
-
-    required = CatalogService.get_required_dependencies(db, resource_type)
-    recommended = CatalogService.get_recommended_dependencies(db, resource_type)
-    optional = CatalogService.get_optional_dependencies(db, resource_type)
-
-    return CatalogDependenciesResponse(
-        resource_type=resource_type,
-        required=[CatalogDependencyResponse.model_validate(dep) for dep in required],
-        recommended=[CatalogDependencyResponse.model_validate(dep) for dep in recommended],
-        optional=[CatalogDependencyResponse.model_validate(dep) for dep in optional],
-    )
-
-
-@router.get("/catalog/resources/{resource_type}/terraform", response_model=TerraformMappingResponse)
-def get_resource_terraform_mapping(
-    resource_type: str,
-    db: Session = Depends(get_db),
-) -> TerraformMappingResponse:
-    """Get Terraform mapping for a resource type."""
-    resource = CatalogService.get_resource_type(db, resource_type)
-    if not resource:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Resource type {resource_type} not found in catalog",
-        )
-
-    terraform_mapping = resource.terraform_mapping or {}
-    return TerraformMappingResponse(
-        resource_type=resource_type,
-        terraform_type=terraform_mapping.get("terraform_type"),
-        provider=terraform_mapping.get("provider"),
-        additional_mapping=terraform_mapping.get("additional_mapping"),
     )
 
 

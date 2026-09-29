@@ -1139,6 +1139,127 @@ class ValidationEngine:
         
         return findings
 
+    @staticmethod
+    def _validate_relationships(
+        db: Session,
+        architecture_id: UUID,
+        version_id: UUID,
+    ) -> List[dict]:
+        """Validate relationship constraints."""
+        findings = []
+
+        resources_in_version = db.query(Resource).filter(
+            Resource.architecture_version_id == version_id
+        ).all()
+        resource_ids = {resource.id for resource in resources_in_version}
+
+        relationships = db.query(Relationship).filter(
+            Relationship.architecture_version_id == version_id
+        ).all()
+
+        for relationship in relationships:
+            if relationship.source_resource_id not in resource_ids:
+                findings.append({
+                    "architecture_id": architecture_id,
+                    "architecture_version_id": version_id,
+                    "severity": "ERROR",
+                    "category": "RELATIONSHIP",
+                    "code": "INVALID_RELATIONSHIP_SOURCE",
+                    "message": f"Relationship source resource {relationship.source_resource_id} does not exist",
+                    "resource_id": relationship.source_resource_id,
+                    "related_resource_id": relationship.target_resource_id,
+                    "details": {"relationship_type": relationship.relationship_type},
+                })
+                continue
+
+            if relationship.target_resource_id not in resource_ids:
+                findings.append({
+                    "architecture_id": architecture_id,
+                    "architecture_version_id": version_id,
+                    "severity": "ERROR",
+                    "category": "RELATIONSHIP",
+                    "code": "INVALID_RELATIONSHIP_TARGET",
+                    "message": f"Relationship target resource {relationship.target_resource_id} does not exist",
+                    "resource_id": relationship.source_resource_id,
+                    "related_resource_id": relationship.target_resource_id,
+                    "details": {"relationship_type": relationship.relationship_type},
+                })
+                continue
+
+            if relationship.source_resource_id == relationship.target_resource_id:
+                findings.append({
+                    "architecture_id": architecture_id,
+                    "architecture_version_id": version_id,
+                    "severity": "ERROR",
+                    "category": "RELATIONSHIP",
+                    "code": "SELF_REFERENCING_RELATIONSHIP",
+                    "message": "Relationship cannot reference the same resource",
+                    "resource_id": relationship.source_resource_id,
+                    "related_resource_id": None,
+                    "details": {"relationship_type": relationship.relationship_type},
+                })
+
+            if not relationship.relationship_type or not relationship.relationship_type.strip():
+                findings.append({
+                    "architecture_id": architecture_id,
+                    "architecture_version_id": version_id,
+                    "severity": "ERROR",
+                    "category": "RELATIONSHIP",
+                    "code": "INVALID_RELATIONSHIP_TYPE",
+                    "message": "Relationship has empty relationship_type",
+                    "resource_id": relationship.source_resource_id,
+                    "related_resource_id": relationship.target_resource_id,
+                    "details": None,
+                })
+
+        return findings
+
+    @staticmethod
+    def _validate_dependencies(
+        db: Session,
+        architecture_id: UUID,
+        version_id: UUID,
+    ) -> List[dict]:
+        """Validate dependencies using Dependency Engine output."""
+        findings = []
+        dependency_findings = DependencyEngine.analyze_version(db, architecture_id, version_id)
+
+        for dependency_finding in dependency_findings.get("findings", []):
+            if dependency_finding.get("status") == "CATALOG_RESOURCE_TYPE_UNKNOWN":
+                continue
+
+            classification = dependency_finding.get("classification")
+            status = dependency_finding.get("status")
+
+            if status == "MISSING":
+                if classification == "REQUIRED":
+                    severity = "ERROR"
+                    code = "REQUIRED_DEPENDENCY_MISSING"
+                elif classification == "RECOMMENDED":
+                    severity = "WARNING"
+                    code = "RECOMMENDED_DEPENDENCY_MISSING"
+                else:
+                    severity = "INFO"
+                    code = "OPTIONAL_DEPENDENCY_MISSING"
+
+                findings.append({
+                    "architecture_id": architecture_id,
+                    "architecture_version_id": version_id,
+                    "severity": severity,
+                    "category": "DEPENDENCY",
+                    "code": code,
+                    "message": f"Resource {dependency_finding.get('source_resource_key')} requires {dependency_finding.get('dependency_resource_type')}",
+                    "resource_id": dependency_finding.get("source_resource_id"),
+                    "related_resource_id": None,
+                    "details": {
+                        "source_type": dependency_finding.get("source_resource_type"),
+                        "dependency_type": dependency_finding.get("dependency_resource_type"),
+                        "classification": classification,
+                    },
+                })
+
+        return findings
+
 
 # ==================== COMPLIANCE ENGINE SERVICES ====================
 
@@ -1995,133 +2116,3 @@ class ComplianceEngine:
         else:
             return "PASSED"
     
-    @staticmethod
-    def _validate_relationships(
-        db: Session,
-        architecture_id: UUID,
-        version_id: UUID,
-    ) -> List[dict]:
-        """Validate relationship constraints."""
-        findings = []
-        
-        # Load all resources for this version
-        resources_in_version = db.query(Resource).filter(
-            Resource.architecture_version_id == version_id
-        ).all()
-        resource_ids = {r.id for r in resources_in_version}
-        
-        # Load all relationships for this version
-        relationships = db.query(Relationship).filter(
-            Relationship.architecture_version_id == version_id
-        ).all()
-        
-        for rel in relationships:
-            # Check if source resource exists in this version
-            if rel.source_resource_id not in resource_ids:
-                findings.append({
-                    "architecture_id": architecture_id,
-                    "architecture_version_id": version_id,
-                    "severity": "ERROR",
-                    "category": "RELATIONSHIP",
-                    "code": "INVALID_RELATIONSHIP_SOURCE",
-                    "message": f"Relationship source resource {rel.source_resource_id} does not exist",
-                    "resource_id": rel.source_resource_id,
-                    "related_resource_id": rel.target_resource_id,
-                    "details": {"relationship_type": rel.relationship_type},
-                })
-                continue
-            
-            # Check if target resource exists in this version
-            if rel.target_resource_id not in resource_ids:
-                findings.append({
-                    "architecture_id": architecture_id,
-                    "architecture_version_id": version_id,
-                    "severity": "ERROR",
-                    "category": "RELATIONSHIP",
-                    "code": "INVALID_RELATIONSHIP_TARGET",
-                    "message": f"Relationship target resource {rel.target_resource_id} does not exist",
-                    "resource_id": rel.source_resource_id,
-                    "related_resource_id": rel.target_resource_id,
-                    "details": {"relationship_type": rel.relationship_type},
-                })
-                continue
-            
-            # Check for self-referencing relationships
-            if rel.source_resource_id == rel.target_resource_id:
-                findings.append({
-                    "architecture_id": architecture_id,
-                    "architecture_version_id": version_id,
-                    "severity": "ERROR",
-                    "category": "RELATIONSHIP",
-                    "code": "SELF_REFERENCING_RELATIONSHIP",
-                    "message": f"Relationship cannot reference the same resource",
-                    "resource_id": rel.source_resource_id,
-                    "related_resource_id": None,
-                    "details": {"relationship_type": rel.relationship_type},
-                })
-            
-            # Check for empty relationship type
-            if not rel.relationship_type or not rel.relationship_type.strip():
-                findings.append({
-                    "architecture_id": architecture_id,
-                    "architecture_version_id": version_id,
-                    "severity": "ERROR",
-                    "category": "RELATIONSHIP",
-                    "code": "INVALID_RELATIONSHIP_TYPE",
-                    "message": f"Relationship has empty relationship_type",
-                    "resource_id": rel.source_resource_id,
-                    "related_resource_id": rel.target_resource_id,
-                    "details": None,
-                })
-        
-        return findings
-    
-    @staticmethod
-    def _validate_dependencies(
-        db: Session,
-        architecture_id: UUID,
-        version_id: UUID,
-    ) -> List[dict]:
-        """Validate dependencies using M3 Dependency Engine output."""
-        findings = []
-        
-        # Use Dependency Engine to get findings
-        dep_findings = DependencyEngine.analyze_version(db, architecture_id, version_id)
-        
-        for dep_finding in dep_findings.get("findings", []):
-            # Skip already-generated unknown/catalog findings (they're handled by resource validation)
-            if dep_finding.get("status") == "CATALOG_RESOURCE_TYPE_UNKNOWN":
-                continue  # Already reported in _validate_resources
-            
-            # Map dependency findings to validation findings
-            classification = dep_finding.get("classification")
-            status = dep_finding.get("status")
-            
-            if status == "MISSING":
-                if classification == "REQUIRED":
-                    severity = "ERROR"
-                    code = "REQUIRED_DEPENDENCY_MISSING"
-                elif classification == "RECOMMENDED":
-                    severity = "WARNING"
-                    code = "RECOMMENDED_DEPENDENCY_MISSING"
-                else:  # OPTIONAL
-                    severity = "INFO"
-                    code = "OPTIONAL_DEPENDENCY_MISSING"
-                
-                findings.append({
-                    "architecture_id": architecture_id,
-                    "architecture_version_id": version_id,
-                    "severity": severity,
-                    "category": "DEPENDENCY",
-                    "code": code,
-                    "message": f"Resource {dep_finding.get('source_resource_key')} requires {dep_finding.get('dependency_resource_type')}",
-                    "resource_id": dep_finding.get("source_resource_id"),
-                    "related_resource_id": None,
-                    "details": {
-                        "source_type": dep_finding.get("source_resource_type"),
-                        "dependency_type": dep_finding.get("dependency_resource_type"),
-                        "classification": classification,
-                    },
-                })
-        
-        return findings
