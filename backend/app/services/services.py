@@ -842,10 +842,6 @@ class DependencyEngine:
 
         if related_resource:
             # Found a relationship to a resource of the required type
-            matched = db.query("Resource").filter(
-                "Resource.id" == related_resource.target_resource_id
-            ).first()
-            # Re-fetch to get actual ORM object
             from ..models import Resource
             matched = db.query(Resource).filter(
                 Resource.id == related_resource.target_resource_id
@@ -1619,7 +1615,7 @@ class ComplianceEngine:
                         "control_code": "VALIDATION_BLOCKED",
                         "title": "Architecture contains structural validation errors",
                         "category": "VALIDATION",
-                        "outcome": NOT_EVALUATED,
+                        "outcome": ComplianceEngine.NOT_EVALUATED,
                         "policy_level": "REQUIRED",
                         "message": "Cannot evaluate compliance: architecture validation contains errors",
                         "resource_id": None,
