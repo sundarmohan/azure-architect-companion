@@ -119,7 +119,7 @@ class Relationship(Base):
     source_resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
     target_resource_id = Column(UUID(as_uuid=True), ForeignKey("resources.id"), nullable=False, index=True)
     relationship_type = Column(String(100), nullable=False)  # e.g., "connects_to", "uses", "protects"
-    metadata = Column(JSON, nullable=True)  # Additional relationship metadata
+    relationship_metadata = Column("metadata", JSON, nullable=True)  # Additional relationship metadata
 
     # Relationships
     architecture_version = relationship("ArchitectureVersion", back_populates="relationships")

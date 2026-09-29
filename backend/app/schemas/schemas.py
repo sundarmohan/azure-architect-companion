@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # ==================== Architecture Schemas ====================
@@ -142,15 +142,21 @@ class RelationshipUpdate(BaseModel):
 class RelationshipResponse(BaseModel):
     """Schema for relationship API response."""
 
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
     id: UUID
     architecture_version_id: UUID
     source_resource_id: UUID
     target_resource_id: UUID
     relationship_type: str
-    metadata: Optional[dict]
-
-    class Config:
-        from_attributes = True
+    metadata: Optional[dict] = Field(
+        None,
+        validation_alias="relationship_metadata",
+        serialization_alias="metadata",
+    )
 
 
 # ==================== Dependency Schemas ====================

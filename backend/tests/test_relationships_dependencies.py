@@ -135,8 +135,8 @@ class TestRelationshipService:
         relationship = RelationshipService.create(db, resources["version"].id, schema)
 
         retrieved = RelationshipService.get(db, relationship.id)
-        assert retrieved.metadata["connection_type"] == "direct"
-        assert retrieved.metadata["bandwidth"] == "10Gbps"
+        assert retrieved.relationship_metadata["connection_type"] == "direct"
+        assert retrieved.relationship_metadata["bandwidth"] == "10Gbps"
 
     def test_relationship_same_source_target_error(self, db: Session, setup_resources):
         """Test that a resource cannot relate to itself."""

@@ -211,7 +211,7 @@ class RelationshipService:
             source_resource_id=relationship.source_resource_id,
             target_resource_id=relationship.target_resource_id,
             relationship_type=relationship.relationship_type,
-            metadata=relationship.metadata,
+            relationship_metadata=relationship.metadata,
         )
         db.add(db_relationship)
         db.commit()
