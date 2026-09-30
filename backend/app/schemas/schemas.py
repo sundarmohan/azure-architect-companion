@@ -478,3 +478,73 @@ class ComplianceEvaluationResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# ==================== TERRAFORM GENERATOR SCHEMAS ====================
+
+
+class TerraformGenerationRequest(BaseModel):
+    """Optional comparison input for Terraform generation."""
+
+    compare_to_version_id: Optional[UUID] = None
+
+
+class TerraformGenerationFindingResponse(BaseModel):
+    """Structured warning or error produced during generation."""
+
+    code: str
+    severity: str
+    message: str
+    resource_id: Optional[UUID] = None
+    resource_type: Optional[str] = None
+    details: Optional[dict] = None
+
+
+class TerraformFileResponse(BaseModel):
+    """A deterministic generated Terraform file."""
+
+    path: str
+    content: str
+    resource_keys: List[str] = Field(default_factory=list)
+
+
+class TerraformGenerationResponse(BaseModel):
+    """Complete result for one architecture version generation."""
+
+    architecture_id: UUID
+    architecture_version_id: UUID
+    generator_version: str
+    status: str
+    validation_status: str
+    validation_findings: List[ValidationFindingResponse] = Field(default_factory=list)
+    files: List[TerraformFileResponse] = Field(default_factory=list)
+    warnings: List[TerraformGenerationFindingResponse] = Field(default_factory=list)
+    errors: List[TerraformGenerationFindingResponse] = Field(default_factory=list)
+    resources_processed: int
+    resources_unsupported: List[UUID] = Field(default_factory=list)
+    changed_files: List[str] = Field(default_factory=list)
+
+
+class TerraformResourceChangeResponse(BaseModel):
+    """Architecture resource change and its Terraform impact."""
+
+    resource_key: str
+    change_type: str
+    from_resource_id: Optional[UUID] = None
+    to_resource_id: Optional[UUID] = None
+    affected_files: List[str] = Field(default_factory=list)
+
+
+class TerraformChangeAnalysisResponse(BaseModel):
+    """Deterministic generated-file comparison between two versions."""
+
+    architecture_id: UUID
+    from_version_id: UUID
+    to_version_id: UUID
+    added_resources: List[str] = Field(default_factory=list)
+    removed_resources: List[str] = Field(default_factory=list)
+    modified_resources: List[str] = Field(default_factory=list)
+    unchanged_resources: List[str] = Field(default_factory=list)
+    resource_changes: List[TerraformResourceChangeResponse] = Field(default_factory=list)
+    affected_files: List[str] = Field(default_factory=list)
+    unchanged_files: List[str] = Field(default_factory=list)

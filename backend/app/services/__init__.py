@@ -14,6 +14,7 @@ from .services import (
     ComplianceFrameworkService,
     ComplianceEngine,
 )
+from .terraform_generator import TerraformGenerator
 
 __all__ = [
     "ArchitectureService",
@@ -26,4 +27,5 @@ __all__ = [
     "ValidationEngine",
     "ComplianceFrameworkService",
     "ComplianceEngine",
+    "TerraformGenerator",
 ]

@@ -2,7 +2,7 @@
 FastAPI routes for the API.
 """
 
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +20,7 @@ from ..services import (
     ValidationEngine,
     ComplianceFrameworkService,
     ComplianceEngine,
+    TerraformGenerator,
 )
 from ..schemas import (
     ArchitectureCreate,
@@ -49,6 +50,9 @@ from ..schemas import (
     ComplianceFrameworkEvaluationResponse,
     ComplianceEvaluationRequest,
     ComplianceEvaluationResponse,
+    TerraformGenerationRequest,
+    TerraformGenerationResponse,
+    TerraformChangeAnalysisResponse,
 )
 
 router = APIRouter()
@@ -594,6 +598,79 @@ def validate_architecture(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        )
+
+
+# ==================== TERRAFORM GENERATOR ENDPOINTS ====================
+
+
+@router.post(
+    "/architectures/{architecture_id}/versions/{version_id}/terraform/generate",
+    response_model=TerraformGenerationResponse,
+)
+def generate_terraform(
+    architecture_id: UUID,
+    version_id: UUID,
+    request: Optional[TerraformGenerationRequest] = None,
+    db: Session = Depends(get_db),
+) -> TerraformGenerationResponse:
+    """Generate Terraform without executing Terraform or contacting Azure."""
+    try:
+        result = TerraformGenerator.generate(
+            db,
+            architecture_id,
+            version_id,
+            request.compare_to_version_id if request else None,
+        )
+        return TerraformGenerationResponse(**result)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/terraform",
+    response_model=TerraformGenerationResponse,
+)
+def get_generated_terraform(
+    architecture_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformGenerationResponse:
+    """Retrieve generated Terraform by deterministically regenerating it."""
+    try:
+        return TerraformGenerationResponse(
+            **TerraformGenerator.generate(db, architecture_id, version_id)
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{from_version_id}/terraform/changes/{to_version_id}",
+    response_model=TerraformChangeAnalysisResponse,
+)
+def analyze_terraform_changes(
+    architecture_id: UUID,
+    from_version_id: UUID,
+    to_version_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformChangeAnalysisResponse:
+    """Compare canonical resources and generated files across two versions."""
+    try:
+        result = TerraformGenerator.compare_versions(
+            db, architecture_id, from_version_id, to_version_id
+        )
+        return TerraformChangeAnalysisResponse(**result)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
         )
 
 

@@ -36,6 +36,12 @@ from .schemas import (
     ComplianceFrameworkEvaluationResponse,
     ComplianceEvaluationRequest,
     ComplianceEvaluationResponse,
+    TerraformGenerationRequest,
+    TerraformGenerationFindingResponse,
+    TerraformFileResponse,
+    TerraformGenerationResponse,
+    TerraformResourceChangeResponse,
+    TerraformChangeAnalysisResponse,
 )
 
 __all__ = [
@@ -72,4 +78,10 @@ __all__ = [
     "ComplianceFrameworkEvaluationResponse",
     "ComplianceEvaluationRequest",
     "ComplianceEvaluationResponse",
+    "TerraformGenerationRequest",
+    "TerraformGenerationFindingResponse",
+    "TerraformFileResponse",
+    "TerraformGenerationResponse",
+    "TerraformResourceChangeResponse",
+    "TerraformChangeAnalysisResponse",
 ]
