@@ -94,7 +94,12 @@ describe("Assessments and Vulnerabilities workspace", () => {
   });
 
   it("requires a retest note before closing a finding", async () => {
-    updateAssessmentFinding.mockResolvedValue({ ...finding, status: "closed", retest_note: "Rechecked." });
+    const closed = { ...finding, status: "closed", retest_note: "Rechecked." };
+    updateAssessmentFinding.mockResolvedValue(closed);
+    getAssessment.mockResolvedValueOnce(assessment).mockResolvedValueOnce({
+      ...assessment,
+      findings: [{ ...closed, history: [{ status: "closed", note: "Rechecked.", created_at: "2026-11-23T11:00:00Z" }] }],
+    });
     render(<AssessmentWorkspace canEdit />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Staging review" }));
     fireEvent.click(await screen.findByText("Update finding"));
@@ -106,6 +111,7 @@ describe("Assessments and Vulnerabilities workspace", () => {
     fireEvent.change(screen.getByLabelText("Retest note"), { target: { value: "Rechecked." } });
     fireEvent.click(screen.getByRole("button", { name: "Save finding" }));
     expect(await screen.findByText("Finding updated.")).toBeInTheDocument();
+    expect(await screen.findByText("Finding history")).toBeInTheDocument();
     expect(updateAssessmentFinding).toHaveBeenCalledWith(assessment.id, finding.id, {
       status: "closed", owner: finding.owner, due_date: finding.due_date, retest_note: "Rechecked.",
     });

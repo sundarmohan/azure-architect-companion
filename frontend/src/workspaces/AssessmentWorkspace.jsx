@@ -20,6 +20,7 @@ const NEXT_STATUSES = {
 const IMPORT_FIELDS = ["external_id", "title", "severity", "source", "evidence"];
 const OPTIONAL_IMPORT_FIELDS = ["tool_version", "methodology", "observed_at"];
 const PAGE_SIZE = 20;
+const IMPORT_LIMITS = { external_id: 160, title: 240, source: 100, evidence: 2000, tool_version: 100, methodology: 400 };
 
 function formatTime(value) {
   return new Date(value).toLocaleString();
@@ -33,6 +34,7 @@ function parseFindings(raw) {
     throw new Error("Enter a valid JSON array of findings.");
   }
   if (!Array.isArray(findings) || !findings.length) throw new Error("Enter a JSON array containing at least one finding.");
+  if (findings.length > 100) throw new Error("Import up to 100 findings at a time.");
   return findings.map((finding, index) => {
     if (!finding || IMPORT_FIELDS.some((field) => typeof finding[field] !== "string" || !finding[field].trim())) {
       throw new Error(`Finding ${index + 1} requires text for external_id, title, severity, source, and evidence.`);
@@ -44,6 +46,12 @@ function parseFindings(raw) {
       if (typeof finding[field] !== "string") throw new Error(`Finding ${index + 1} requires text for ${field}.`);
       const value = finding[field].trim();
       if (value) row[field] = value;
+    }
+    for (const [field, limit] of Object.entries(IMPORT_LIMITS)) {
+      if (row[field]?.length > limit) throw new Error(`Finding ${index + 1} exceeds the ${field} limit of ${limit} characters.`);
+    }
+    if (row.observed_at && (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(row.observed_at) || !Number.isFinite(Date.parse(row.observed_at)))) {
+      throw new Error(`Finding ${index + 1} requires an observed_at timestamp with a timezone.`);
     }
     return row;
   });
@@ -103,10 +111,10 @@ function CreateAssessment({ onCreate }) {
     <h2>Record an assessment</h2>
     {error && <p className="error" role="alert">{error}</p>}
     <fieldset disabled={busy}>
-      <label>Assessment name<input name="name" required /></label>
-      <label>Environment<input name="environment" /></label>
-      <label>Scope and exclusions<textarea name="scope" rows={3} required /></label>
-      <label>Authorization reference<textarea name="authorization" rows={3} required /></label>
+      <label>Assessment name<input name="name" maxLength={180} required /></label>
+      <label>Environment<input name="environment" maxLength={80} /></label>
+      <label>Scope and exclusions<textarea name="scope" rows={3} maxLength={4000} required /></label>
+      <label>Authorization reference<textarea name="authorization" rows={3} maxLength={2000} required /></label>
       <p>Enter the approved window in your local time.</p>
       <div className="grid">
         <label>Window start<input name="window_start" type="datetime-local" required /></label>
@@ -180,8 +188,8 @@ function AssessmentFinding({ assessmentId, finding, canEdit, onSave }) {
         due_date: fields.get("due_date") || null,
         retest_note: retestNote || null,
       });
-      onSave(next);
       setMessage("Finding updated.");
+      await onSave(next);
     } catch (failure) {
       if (failure.name !== "AbortError") setError(failure.message);
     } finally {
@@ -203,6 +211,13 @@ function AssessmentFinding({ assessmentId, finding, canEdit, onSave }) {
       {finding.observed_at && <p>Observed {formatTime(finding.observed_at)}</p>}
       {finding.retest_note && <p>Retest note {finding.retest_note}</p>}
     </details>
+    {finding.history?.length > 0 && <details>
+      <summary>Finding history</summary>
+      <ol>{finding.history.map((event, index) => <li key={`${event.created_at}-${index}`}>
+        <strong>{displayLabel(event.status)}</strong><span>{formatTime(event.created_at)}</span>
+        {event.note && <p>{event.note}</p>}
+      </li>)}</ol>
+    </details>}
     {canEdit && <details>
       <summary>Update finding</summary>
       <form className="account-form" key={JSON.stringify([finding.status, finding.owner, finding.due_date, finding.retest_note])} onSubmit={save}>
@@ -210,9 +225,9 @@ function AssessmentFinding({ assessmentId, finding, canEdit, onSave }) {
           <label>Finding status<select name="status" defaultValue={finding.status}>
             {availableStatuses.map((status) => <option key={status} value={status}>{displayLabel(status)}</option>)}
           </select></label>
-          <label>Finding owner<input name="owner" defaultValue={finding.owner || ""} /></label>
+          <label>Finding owner<input name="owner" maxLength={120} defaultValue={finding.owner || ""} /></label>
           <label>Finding due date<input name="due_date" type="date" defaultValue={finding.due_date || ""} /></label>
-          <label>Retest note<textarea name="retest_note" rows={3} defaultValue={finding.retest_note || ""} /></label>
+          <label>Retest note<textarea name="retest_note" rows={3} maxLength={2000} defaultValue={finding.retest_note || ""} /></label>
           <div><button type="submit">{busy ? "Saving…" : "Save finding"}</button></div>
         </fieldset>
       </form>
@@ -306,6 +321,11 @@ export default function AssessmentWorkspace({ canEdit }) {
     }
   }
 
+  async function reloadDetails(id) {
+    const refreshed = await getAssessment(id);
+    setSelected((current) => current?.id === id ? refreshed : current);
+  }
+
   return <section className="workspace-panel azure-observability">
     <div className="workspace-header"><div>
       <h1>Assessments &amp; Vulnerabilities</h1>
@@ -314,14 +334,16 @@ export default function AssessmentWorkspace({ canEdit }) {
     {error && <p className="error" role="alert">{error}</p>}
     {selected ? <AssessmentDetail key={selected.id} assessment={selected} canEdit={canEdit}
       onBack={() => setSelected(null)}
-      onImport={async () => {
-        const refreshed = await getAssessment(selected.id);
-        setSelected((current) => current?.id === refreshed.id ? refreshed : current);
-      }}
-      onSave={(next) => setSelected((current) => current?.id === selected.id ? ({
-        ...current,
-        findings: current.findings.map((finding) => finding.id === next.id ? next : finding),
-      }) : current)} /> : <>
+      onImport={() => reloadDetails(selected.id)}
+      onSave={async (next) => {
+        setSelected((current) => current?.id === selected.id ? ({
+          ...current,
+          findings: current.findings.map((finding) => finding.id === next.id
+            ? { ...next, history: next.history?.length ? next.history : finding.history }
+            : finding),
+        }) : current);
+        await reloadDetails(selected.id);
+      }} /> : <>
       {canEdit && <div className="actions"><button type="button" disabled={loadingDetail || !assessments}
         aria-expanded={creating} onClick={() => setCreating(!creating)}>
         {creating ? "Cancel new assessment" : "New assessment"}
