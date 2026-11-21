@@ -44,7 +44,9 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 - [x] Phase 3: scoped Azure monitoring, network intelligence, and opt-in polling.
   [GitHub Actions verified the Phase 3 code at `d044e9d`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44932110082).
   Provider responses are mocked in CI. Live Azure collection remains unverified.
-- [ ] Phase 4: Azure cybersecurity posture, threat signals, and finding tracking.
+- [x] Phase 4: Azure cybersecurity posture, threat signals, and finding tracking.
+  [GitHub Actions verified the Phase 4 code at `c6e57d1`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44941135258).
+  CI uses mocked Azure responses. The EC2 preview still runs the Phase 3 release.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
 GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
