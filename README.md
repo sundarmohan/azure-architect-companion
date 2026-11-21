@@ -30,6 +30,22 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
   `POSTGRES_PASSWORD` into the server's `.env` on first deploy if it is missing.
 - Database migrations run automatically in the app's startup hook.
 
+## Development checklist
+
+- [x] Phase 0: record the repository, database, deployment, and cleanup baseline.
+- [x] Phase 1: local identity, revocable sessions, RBAC, audit events, client
+  isolation, protected Azure architecture designs, and encrypted Azure credentials.
+  [GitHub Actions verified the Phase 1 code at `f0648ba`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44926569041).
+- [ ] Phase 2: client-scoped Azure discovery, inventory, and architecture workflows.
+- [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
+
+The Azure connection test uses a mocked provider response in CI. Required
+checks cover a fresh PostgreSQL migration, backend tests, active frontend
+tests, and the production frontend build. Two historical monitoring suites
+run separately and are currently non-blocking. Reconcile their expectations
+and restore them to required checks when the monitoring UI is re-enabled.
+The background monitoring worker and other unscoped surfaces remain disabled.
+
 ## Phase 1 access setup
 
 Set `MONITORAI_BOOTSTRAP_USERNAME` and `MONITORAI_BOOTSTRAP_PASSWORD` in a
