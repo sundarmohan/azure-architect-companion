@@ -41,7 +41,9 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
   [GitHub Actions verified the Phase 2 code at `8854402`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44927878566).
   Azure inventory tests use mocked Azure responses. Live Azure access and
   applying exported artifacts are outside this verification.
-- [ ] Phase 3: scoped Azure monitoring, network intelligence, and opt-in polling.
+- [x] Phase 3: scoped Azure monitoring, network intelligence, and opt-in polling.
+  [GitHub Actions verified the Phase 3 code at `d044e9d`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44932110082).
+  Provider responses are mocked in CI. Live Azure collection remains unverified.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
 GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
