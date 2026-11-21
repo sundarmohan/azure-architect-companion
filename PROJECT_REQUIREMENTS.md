@@ -256,6 +256,20 @@ Phase 3 delivery and verification:
 - Verify isolation, permission checks, snapshot retention, scheduling, and
   the frontend build through GitHub Actions.
 
+Phase 4 delivery and verification:
+- Read Defender for Cloud findings and active alerts where authorized and
+  summarize selected Azure Activity changes as review signals.
+- Evaluate explicit configuration evidence for network exposure, storage
+  access and TLS, Key Vault settings, Azure SQL encryption and direct
+  privileged subscription roles. Distinguish configuration from reachability.
+- Show an explainable risk score, findings, evidence, source limitations,
+  recommendations, and client-scoped remediation tracking.
+- Administrators can opt in to security collection on existing subscription
+  schedules. Advisory findings do not change Azure resources or execute tests.
+- Vulnerability and patch coverage depends on exposed Defender evidence.
+  Scanner imports, richer identity analytics, and cross-source incident
+  correlation are later-phase work.
+
 13. First deployment and manual testing
 The first complete deployment should follow this sequence:
 1. Complete the Azure-focused application.

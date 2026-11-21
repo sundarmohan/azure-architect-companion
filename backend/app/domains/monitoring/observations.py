@@ -15,9 +15,10 @@ from app.domains.access.azure import confirm_active_connection, connection_value
 from app.domains.access.models import AuditEvent, AzureConnection, AzureInventorySnapshot
 from .network import collect_network
 from .observation_models import AzureObservation, AzureObservationSchedule
+from .security_posture import collect_security_snapshot
 from .telemetry import collect_telemetry
 
-ObservationKind = Literal["monitoring", "network"]
+ObservationKind = Literal["monitoring", "network", "security"]
 KINDS: tuple[ObservationKind, ...] = ("monitoring", "network")
 
 
@@ -29,6 +30,7 @@ class CollectionContext:
     resources: list[dict]
     inventory_exists: bool
     inventory_is_stale: bool
+    network: dict | None
 
 
 async def observation_context(db: AsyncSession, client_id: UUID, subscription_id: UUID | None):
@@ -41,10 +43,17 @@ async def observation_context(db: AsyncSession, client_id: UUID, subscription_id
     inventory = await db.get(AzureInventorySnapshot, (client_id, selected))
     prefix = f"/subscriptions/{selected}/"
     resources = [row for row in inventory.resources if str(row.get("id", "")).casefold().startswith(prefix)] if inventory else []
+    network = await db.get(AzureObservation, (client_id, selected, "network"))
+    network_data = None
+    if network and network.last_success_at:
+        network_data = {
+            "resources": network.payload.get("resources", []), "links": network.payload.get("links", []),
+            "observed_at": network.last_success_at.isoformat(),
+        }
     return CollectionContext(
         selected, values, connection.ciphertext, resources,
         inventory is not None and inventory.last_success_at is not None,
-        inventory is not None and inventory.status != "synced",
+        inventory is not None and inventory.status != "synced", network_data,
     )
 
 
@@ -62,6 +71,11 @@ async def collect_observations(context: CollectionContext, kinds: tuple[Observat
                 if kind == "monitoring":
                     status, result = await collect_telemetry(context.resources, http, headers)
                     return kind, (status, {"resources": result["resources"]}, limitations + result["limitations"])
+                if kind == "security":
+                    status, payload, details = await collect_security_snapshot(
+                        str(context.subscription_id), context.resources, context.network, http, headers
+                    )
+                    return kind, (status, payload, limitations + details)
                 result = await collect_network(str(context.subscription_id), context.resources, http, headers)
                 details = limitations + result.limitations
                 if result.failure_reason:

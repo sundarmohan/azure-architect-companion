@@ -44,11 +44,46 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 - [x] Phase 3: scoped Azure monitoring, network intelligence, and opt-in polling.
   [GitHub Actions verified the Phase 3 code at `d044e9d`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44932110082).
   Provider responses are mocked in CI. Live Azure collection remains unverified.
+- [ ] Phase 4: Azure cybersecurity posture, threat signals, and finding tracking.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
 GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
 and the production frontend build. Azure integration tests use mocked provider
 responses.
+
+## Phase 4 Azure cybersecurity and threat detection
+
+Open Security Posture and Threats for a configured subscription with a
+complete inventory. Editors and administrators can refresh evidence, and
+administrators can opt in to scheduled security collection. The workspace
+shows read-only configuration findings, Defender assessments and active
+alerts where available, and selected Azure Activity security-control signals.
+Refresh Network Intelligence beforehand to include its configured exposure
+evidence.
+
+Each finding shows its evidence and suggested review action. Record an owner,
+due date, and tracking status in MonitorAI. Tracking changes affect local
+records only. The risk score sums finding severity weights, capped at 100.
+A score applies to available evidence and does not certify the environment.
+Missing Azure permissions and unsupported sources are identified separately.
+
+## Interim EC2 preview
+
+The isolated Phase 3 preview uses commit `d4be64e` as its application source
+and leaves the legacy service on the same EC2 host running. The preview
+binds to EC2 loopback port 8002 and uses its own PostgreSQL volume.
+[Deployment and smoke checks](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44933300795)
+
+Open an SSH tunnel using the existing EC2 SSH credentials:
+
+```sh
+ssh -N -L 8002:127.0.0.1:8002 EC2_USER@EC2_HOST
+```
+
+Then open `http://localhost:8002` in Chrome or Edge. Sign in as
+`monitorai-admin` using the bootstrap password in the protected
+`~/monitorai-v22-preview/.env` file on EC2. Use your authorized EC2 session
+to access the file and change the bootstrap password after first sign-in.
 
 ## Phase 3 Azure monitoring and network intelligence
 

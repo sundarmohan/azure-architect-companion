@@ -88,6 +88,7 @@ function MonitoringResources({ snapshot }) {
 function MonitoringSchedule({ subscription }) {
   const [schedule, setSchedule] = useState(null);
   const [enabled, setEnabled] = useState(false);
+  const [includeSecurity, setIncludeSecurity] = useState(false);
   const [interval, setInterval] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -99,6 +100,7 @@ function MonitoringSchedule({ subscription }) {
       if (!active) return;
       setSchedule(data);
       setEnabled(data.enabled);
+      setIncludeSecurity(data.include_security ?? false);
       setInterval(String(data.interval_minutes));
     }).catch((failure) => {
       if (active && failure.name !== "AbortError") setError(failure.message);
@@ -112,9 +114,12 @@ function MonitoringSchedule({ subscription }) {
     setError("");
     setFeedback("");
     try {
-      const data = await updateAzureMonitoringSchedule(subscription, { enabled, interval_minutes: Number(interval) });
+      const data = await updateAzureMonitoringSchedule(subscription, {
+        enabled, interval_minutes: Number(interval), include_security: includeSecurity,
+      });
       setSchedule(data);
       setEnabled(data.enabled);
+      setIncludeSecurity(data.include_security ?? false);
       setInterval(String(data.interval_minutes));
       setFeedback("Schedule saved.");
     } catch (failure) {
@@ -134,6 +139,8 @@ function MonitoringSchedule({ subscription }) {
       <fieldset disabled={busy}>
         <label className="observability-checkbox"><input type="checkbox" checked={enabled}
           onChange={(event) => setEnabled(event.target.checked)} /> Enable scheduled collection</label>
+        <label className="observability-checkbox"><input type="checkbox" checked={includeSecurity}
+          onChange={(event) => setIncludeSecurity(event.target.checked)} /> Include security posture and threats</label>
         <label>Interval (minutes)<input type="number" min={5} max={1440} step={1} value={interval} required
           onChange={(event) => setInterval(event.target.value)} /></label>
         {schedule.enabled && <p>Next scheduled collection {snapshotTime(schedule.next_run_at)}</p>}

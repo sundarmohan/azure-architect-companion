@@ -99,15 +99,22 @@ describe("Azure monitoring workspace", () => {
   it("saves the collection schedule for the selected subscription as an administrator", async () => {
     getAzureMonitoring.mockResolvedValue(snapshot("vm-a"));
     getAzureMonitoringSchedule.mockResolvedValue({ enabled: false, interval_minutes: 60, next_run_at: null });
-    updateAzureMonitoringSchedule.mockResolvedValue({ enabled: true, interval_minutes: 30, next_run_at: "2026-11-01T01:00:00Z" });
+    updateAzureMonitoringSchedule.mockResolvedValue({
+      enabled: true, interval_minutes: 30, include_security: true, next_run_at: "2026-11-01T01:00:00Z",
+    });
     render(<AzureMonitoringWorkspace canRefresh canManageSchedule />);
 
     fireEvent.click(await screen.findByLabelText("Enable scheduled collection"));
+    const includeSecurity = screen.getByLabelText("Include security posture and threats");
+    expect(includeSecurity).not.toBeChecked();
+    fireEvent.click(includeSecurity);
     fireEvent.change(screen.getByLabelText("Interval (minutes)"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "Save schedule" }));
 
     expect(await screen.findByText("Schedule saved.")).toBeInTheDocument();
-    expect(updateAzureMonitoringSchedule).toHaveBeenCalledWith(SUBSCRIPTIONS[0], { enabled: true, interval_minutes: 30 });
+    expect(updateAzureMonitoringSchedule).toHaveBeenCalledWith(SUBSCRIPTIONS[0], {
+      enabled: true, interval_minutes: 30, include_security: true,
+    });
   });
 
   it("queries bounded aggregates for an inventory resource as an operator", async () => {

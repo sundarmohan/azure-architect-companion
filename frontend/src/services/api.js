@@ -155,6 +155,12 @@ export const getAzureMonitoringSchedule=id=>fetchRequest(`/azure/monitoring/sche
 export const updateAzureMonitoringSchedule=(id,data)=>request(`/azure/monitoring/schedule${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
 export const getAzureNetwork=id=>fetchRequest(`/azure/network${subscriptionQuery(id)}`);
 export const refreshAzureNetwork=id=>request(`/azure/network/refresh${subscriptionQuery(id)}`,{method:"POST"});
+export const getAzureSecurity=id=>fetchRequest(`/azure/security${subscriptionQuery(id)}`);
+export const refreshAzureSecurity=id=>request(`/azure/security/refresh${subscriptionQuery(id)}`,{method:"POST"});
+export const updateAzureFindingTracking=(subscription,id,data)=>request(
+ `/azure/security/findings/${encodeURIComponent(id)}/tracking${subscriptionQuery(subscription)}`,
+ {method:"PUT",body:JSON.stringify(data)},
+);
 export const discoverAzureResources=(id,data)=>request(`/architectures/${id}/discover-resources`,{method:"POST",body:JSON.stringify(data)});
 export const getResourceMonitoring=(aid,rid,data={})=>request(`/architectures/${aid}/resources/${rid}/monitoring`,{method:"POST",body:JSON.stringify(data)});
 export const getArchitectureMonitoringSummary=(aid,data={})=>request(`/architectures/${aid}/monitoring-summary`,{method:"POST",body:JSON.stringify(data)});

@@ -15,6 +15,7 @@ from app.domains.architecture.models import Architecture
 from app.domains.architecture.routes import router as architecture_router
 from app.domains.monitoring.diagnostics import router as diagnostics_router
 from app.domains.monitoring.observation_routes import router as observation_router
+from app.domains.monitoring.security_routes import router as security_router
 
 GRAPH_ENDPOINTS = {
     "list_architectures", "create_architecture", "get_architecture", "update_architecture",
@@ -70,3 +71,4 @@ api_router.include_router(lifecycle_router, prefix="/architectures", tags=["desi
 api_router.include_router(artifacts_router, prefix="/architectures", tags=["design-artifacts"])
 api_router.include_router(observation_router, prefix="/azure", tags=["azure-observations"])
 api_router.include_router(diagnostics_router, prefix="/azure/diagnostics", tags=["azure-diagnostics"])
+api_router.include_router(security_router, prefix="/azure/security", tags=["azure-security"])

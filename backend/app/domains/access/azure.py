@@ -13,7 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.monitoring.observation_models import AzureObservation, AzureObservationSchedule
+from app.domains.monitoring.observation_models import AzureObservation, AzureObservationSchedule, AzureSecurityTracking
 from app.domains.settings.schemas import AzureIntegrationStatusRead
 from .models import AzureConnection, AzureInventorySnapshot, Client
 from .routes import audit, client_access, client_admin, current_account, get_db
@@ -114,7 +114,7 @@ async def save_credentials(payload: Credentials, request: Request, client_id: UU
 
 
 async def retire_observations(db, client_id, retained):
-    for model in (AzureInventorySnapshot, AzureObservation, AzureObservationSchedule):
+    for model in (AzureInventorySnapshot, AzureObservation, AzureObservationSchedule, AzureSecurityTracking):
         query = delete(model).where(model.client_id == client_id)
         if retained:
             query = query.where(model.subscription_id.not_in(retained))

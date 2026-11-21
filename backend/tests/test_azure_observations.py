@@ -31,7 +31,10 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
             return {kind: ("inventory_required", {}, []) for kind in kinds}
         assert str(context.subscription_id) == primary and context.resources == [resource]
         payload = {"monitoring": {"resources": [{**resource, "health": "available", "metrics": []}]},
-                   "network": {"resources": [], "links": []}}
+                   "network": {"resources": [], "links": []},
+                   "security": {"findings": [{"id": "a" * 64, "code": "storage", "title": "Example",
+                                               "severity": "high", "evidence": [], "source": "azure"}],
+                                "score": 15, "score_factors": [{"severity": "high", "count": 1, "weight": 15}]}}
         return {kind: (status, payload[kind] if status == "synced" else {}, []) for kind in kinds}
 
     monkeypatch.setattr(inventory, "collect_inventory", fake_inventory)
@@ -52,23 +55,36 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         monitor = "/api/azure/monitoring"
         schedule = monitor + "/schedule"
         network = "/api/azure/network"
+        security = "/api/azure/security"
+        tracking = f"{security}/findings/{'a' * 64}/tracking"
         assert client.post(monitor + "/refresh", headers=first_headers).json()["status"] == "inventory_required"
         sync = client.post("/api/azure/inventory/refresh", headers=first_headers)
         assert sync.status_code == 200, sync.text
-        for path in (monitor, network):
+        for path in (monitor, network, security):
             refreshed = client.post(path + "/refresh", headers=first_headers)
             assert refreshed.status_code == 200, refreshed.text
             assert refreshed.json()["status"] == "synced"
             assert client.get(path, headers=second_headers).json()["status"] == "not_synced"
             assert client.get(path, headers=first_headers, params={"subscription_id": secondary}).json()["status"] == "not_synced"
 
+        details = {"status": "in_progress", "owner": "Cloud operations", "due_date": "2026-12-31"}
+        assert client.put(tracking, headers=second_headers, json=details).status_code == 404
+        saved = client.put(tracking, headers=first_headers, json=details)
+        assert saved.status_code == 200, saved.text
+        assert client.get(security, headers=first_headers).json()["findings"][0]["tracking"] == details
+        assert client.get(security, headers=second_headers).json()["findings"] == []
+        assert client.get(security, headers=first_headers).json()["score"] == 15
+
         status = "permission_failure"
         read = client.post(monitor + "/refresh", headers=first_headers).json()
         assert read["status"] == "permission_failure"
         assert read["last_success_at"] and read["resources"][0]["health"] == "available"
-        assert client.get(schedule, headers=first_headers).json()["enabled"] is False
+        assert client.get(schedule, headers=first_headers).json()["include_security"] is False
         assert client.put(schedule, headers=first_headers, json={"enabled": True, "interval_minutes": 4}).status_code == 422
-        assert client.put(schedule, headers=first_headers, json={"enabled": True, "interval_minutes": 5}).json()["enabled"]
+        configured = client.put(schedule, headers=first_headers, json={
+            "enabled": True, "interval_minutes": 5, "include_security": True,
+        })
+        assert configured.json()["enabled"] and configured.json()["include_security"]
         assert client.get(schedule, headers=second_headers).json()["enabled"] is False
 
         username = "observation-viewer-" + uuid4().hex
@@ -80,6 +96,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.get(monitor, headers=first_headers).status_code == 200
         assert client.get(network, headers=second_headers).status_code == 403
         assert client.post(monitor + "/refresh", headers=first_headers).status_code == 403
+        assert client.put(tracking, headers=first_headers, json=details).status_code == 403
         assert client.put(schedule, headers=first_headers, json={"enabled": False, "interval_minutes": 5}).status_code == 403
         client.cookies.clear()
         client.cookies.set("monitorai_session", admin)
@@ -88,7 +105,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         try:
             claim = await claim_due_schedule()
             assert tuple(map(str, claim[:2])) == (first, primary)
-            assert isinstance(claim[2], UUID)
+            assert isinstance(claim[2], UUID) and claim[3] is True
             async with SessionLocal() as db:
                 assert await observations.refresh_observations(
                     db, UUID(first), UUID(primary), observations.KINDS, schedule_generation=uuid4(),

@@ -20,7 +20,7 @@ async def claim_due_schedule():
         ).order_by(AzureObservationSchedule.next_run_at).limit(1).with_for_update(skip_locked=True))
         if schedule is None:
             return None
-        selected = (schedule.client_id, schedule.subscription_id, schedule.generation)
+        selected = (schedule.client_id, schedule.subscription_id, schedule.generation, schedule.include_security)
         schedule.next_run_at = now + timedelta(minutes=schedule.interval_minutes)
         await db.commit()
         return selected
@@ -34,8 +34,9 @@ async def run_worker():
             selected = await claim_due_schedule()
             if selected:
                 async with SessionLocal() as db:
-                    client_id, subscription_id, generation = selected
-                    await refresh_observations(db, client_id, subscription_id, KINDS, schedule_generation=generation)
+                    client_id, subscription_id, generation, include_security = selected
+                    kinds = (*KINDS, "security") if include_security else KINDS
+                    await refresh_observations(db, client_id, subscription_id, kinds, schedule_generation=generation)
         except Exception as error:
             # Provider credentials and remote response bodies are outside worker logs.
             logger.warning("Scheduled Azure observation failed (%s)", type(error).__name__)

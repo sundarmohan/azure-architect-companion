@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, String
@@ -28,5 +28,17 @@ class AzureObservationSchedule(Base):
     subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
     generation: Mapped[UUID] = mapped_column(default=uuid4)
     enabled: Mapped[bool]
+    include_security: Mapped[bool] = mapped_column(default=False)
     interval_minutes: Mapped[int]
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class AzureSecurityTracking(Base):
+    __tablename__ = "azure_security_tracking"
+
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
+    finding_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16))
+    owner: Mapped[str | None] = mapped_column(String(120))
+    due_date: Mapped[date | None]

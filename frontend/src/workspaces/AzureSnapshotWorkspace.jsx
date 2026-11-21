@@ -74,7 +74,7 @@ function SnapshotPanel({ subscription, canRefresh, loadSnapshot, refreshSnapshot
         </button>}
       </div>
     </section>
-    {children(snapshot, subscription)}
+    {children(snapshot, subscription, setSnapshot)}
   </>;
 }
 

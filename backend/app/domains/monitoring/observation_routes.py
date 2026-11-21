@@ -12,6 +12,7 @@ from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, client_admin, get_db
 from .observation_models import AzureObservation, AzureObservationSchedule
 from .observations import ObservationKind, refresh_observations
+from .security_routes import attach_tracking
 
 router = APIRouter()
 
@@ -24,10 +25,14 @@ class ObservationRead(BaseModel):
     resources: list[dict] = Field(default_factory=list)
     links: list[dict] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    findings: list[dict] = Field(default_factory=list)
+    score: int | None = None
+    score_factors: list[dict] = Field(default_factory=list)
 
 
 class ScheduleWrite(BaseModel):
     enabled: bool
+    include_security: bool = False
     interval_minutes: int = Field(ge=5, le=1440)
 
 
@@ -36,12 +41,12 @@ class ScheduleRead(ScheduleWrite):
     next_run_at: datetime | None = None
 
 
-def observation_read(snapshot, selected):
+async def observation_read(db, snapshot, selected):
     if snapshot is None:
         return ObservationRead(subscription_id=selected, status="not_synced" if selected else "not_configured")
     return ObservationRead(
         subscription_id=selected, status=snapshot.status, last_attempt_at=snapshot.last_attempt_at,
-        last_success_at=snapshot.last_success_at, limitations=snapshot.limitations, **snapshot.payload,
+        last_success_at=snapshot.last_success_at, limitations=snapshot.limitations, **await attach_tracking(db, snapshot, snapshot.payload),
     )
 
 
@@ -50,7 +55,7 @@ async def read_observation(kind: ObservationKind, subscription_id: UUID | None =
                            client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
     selected = select_subscription(await connection_values(db, client_id), subscription_id)
     snapshot = await db.get(AzureObservation, (client_id, UUID(selected), kind)) if selected else None
-    return observation_read(snapshot, selected)
+    return await observation_read(db, snapshot, selected)
 
 
 @router.post("/{kind}/refresh", response_model=ObservationRead)
@@ -58,7 +63,7 @@ async def refresh_observation(kind: ObservationKind, request: Request, subscript
                               client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
     snapshots = await refresh_observations(db, client_id, subscription_id, (kind,), request)
     snapshot = snapshots.get(kind)
-    return observation_read(snapshot, snapshot.subscription_id if snapshot else None)
+    return await observation_read(db, snapshot, snapshot.subscription_id if snapshot else None)
 
 
 @router.get("/monitoring/schedule", response_model=ScheduleRead)
@@ -68,6 +73,7 @@ async def read_schedule(subscription_id: UUID | None = None, client_id: UUID = D
     schedule = await db.get(AzureObservationSchedule, (client_id, UUID(selected))) if selected else None
     return ScheduleRead(subscription_id=selected, enabled=schedule.enabled if schedule else False,
                         interval_minutes=schedule.interval_minutes if schedule else 15,
+                        include_security=schedule.include_security if schedule else False,
                         next_run_at=schedule.next_run_at if schedule else None)
 
 
