@@ -1,220 +1,104 @@
-name: CI/CD - Build and Deploy
+name: MonitorAI Phase 3 private EC2 preview
 
 on:
-  push:
-    branches:
-      - main
-      - consolidation/v2.2-baseline
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Publish and deploy this main revision to EC2
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
-env:
-  IMAGE_NAME: ghcr.io/sundarmohan/azure-architect-companion
-
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy == true && 'production-deployment' || format('ci-{0}', github.ref) }}
+  group: monitorai-v22-preview
   cancel-in-progress: false
 
 jobs:
-  backend-test:
-    name: test
-    runs-on: ubuntu-latest
-
-    # The app's startup hook runs Alembic migrations, so route tests need a real
-    # PostgreSQL. This is a throwaway CI-only database.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: monitorai
-          POSTGRES_PASSWORD: ci_only_password
-          POSTGRES_DB: monitorai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U monitorai -d monitorai"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgresql+asyncpg://monitorai:ci_only_password@localhost:5432/monitorai
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install dependencies
-        working-directory: backend
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest-github-actions-annotate-failures
-
-      - name: Verify Alembic migration chain on fresh PostgreSQL
-        working-directory: backend
-        run: |
-          alembic heads
-          alembic history
-          alembic upgrade head
-          alembic current
-
-      - name: Run pytest
-        working-directory: backend
-        run: pytest -v --tb=short
-
-  frontend-test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Run frontend tests
-        working-directory: frontend
-        run: npm test
-
-      - name: Production build
-        working-directory: frontend
-        run: npm run build
-
-  build-and-push:
-    needs: [backend-test, frontend-test]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
+  publish-preview:
+    if: github.ref == 'refs/heads/release/v2.2-phase3-ec2'
     runs-on: ubuntu-latest
     environment: dev
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # GitHub Container Registry: authenticates with the workflow's own
-      # GITHUB_TOKEN, so no extra registry secrets are required.
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ghcr.io/sundarmohan/azure-architect-companion:preview-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
-    needs: build-and-push
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
+  deploy-preview:
+    needs: publish-preview
+    if: github.ref == 'refs/heads/release/v2.2-phase3-ec2'
     runs-on: ubuntu-latest
     environment: dev
     permissions:
       contents: read
       packages: read
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Validate EC2 configuration
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          test -n "$EC2_HOST" || { echo "Missing EC2_HOST"; exit 1; }
-          test -n "$EC2_USER" || { echo "Missing EC2_USER"; exit 1; }
-          test -n "$EC2_SSH_PRIVATE_KEY" || { echo "Missing EC2_SSH_PRIVATE_KEY"; exit 1; }
-
-      - name: Copy deployment files to EC2
+      - uses: actions/checkout@v4
+      - name: Copy private preview Compose configuration
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          source: "docker-compose.yml,deploy/deploy.sh"
-          target: "/home/${{ secrets.EC2_USER }}/azure-architect-companion"
-
-      - name: Deploy to EC2
+          source: docker-compose.yml
+          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22-preview"
+      - name: Start private preview and verify access
         uses: appleboy/ssh-action@v1
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCKER_IMAGE: ${{ env.IMAGE_NAME }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: preview-${{ github.sha }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          command_timeout: 20m
-          envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG
+          envs: GHCR_USER,GHCR_TOKEN,IMAGE_TAG
+          command_timeout: 10m
           script: |
-            set -e
-            cd ~/azure-architect-companion
-            # Short-lived job token: log in only for this pull, then log out
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            set -eu
+            cd ~/monitorai-v22-preview
+            umask 077
+            if [ ! -e .env ]; then
+              db_password=$(openssl rand -hex 32)
+              admin_password=$(openssl rand -hex 24)
+              azure_key=$(openssl rand -base64 32 | tr '+/' '-_')
+              {
+                printf 'POSTGRES_PASSWORD=%s\n' "$db_password"
+                printf 'MONITORAI_BOOTSTRAP_USERNAME=monitorai-admin\n'
+                printf 'MONITORAI_BOOTSTRAP_PASSWORD=%s\n' "$admin_password"
+                printf 'MONITORAI_AZURE_ENCRYPTION_KEY=%s\n' "$azure_key"
+              } > .env.new
+              mv .env.new .env
+              unset db_password admin_password azure_key
+            fi
+            chmod 600 .env
+            export IMAGE_TAG
+            export COMPOSE_PROJECT_NAME=monitorai-v22-preview
+            legacy=$(docker ps --filter label=com.docker.compose.project=azure-architect-companion --filter label=com.docker.compose.service=app -q)
+            printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
-            export IMAGE_TAG DOCKER_IMAGE
-            bash deploy/deploy.sh
-
-            docker compose ps
+            docker compose pull
+            docker compose up -d --wait --wait-timeout 180
+            curl -fsS http://127.0.0.1:8002/health
+            curl -fsS -o /dev/null http://127.0.0.1:8002/
+            test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8002/api/architectures)" = 401
             docker compose exec -T app alembic current
-
-            # End-to-end smoke checks against the running container
-            curl --fail --show-error --silent http://localhost:8001/health
-            curl --fail --show-error --silent -o /dev/null http://localhost:8001/
-            for path in api/architectures api/azure/resource-catalog api/settings/azure/status; do
-              code=$(curl --show-error --silent --output /dev/null --write-out '%{http_code}' "http://localhost:8001/$path")
-              if [ "$code" != 401 ]; then
-                echo "Expected HTTP 401 for unauthenticated GET /$path, received $code" >&2
-                exit 1
-              fi
-            done
-            docker compose logs --tail=100 app
-
-      - name: Verify public accessibility
-        continue-on-error: true
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          for path in health api/architectures ""; do
-            code=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "http://$EC2_HOST:8001/$path" || true)
-            echo "::notice title=Public check::GET :8001/$path -> HTTP $code"
-          done
+            test "$(docker compose port app 8000)" = 127.0.0.1:8002
+            postgres=$(docker compose ps -q postgres)
+            volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$postgres")
+            test "$volume" = monitorai-v22-preview_monitorai_pg_data
+            if test -n "$legacy"; then
+              test "$(docker inspect --format '{{.State.Running}}' "$legacy")" = true
+            fi
+            docker compose exec -T app python -c 'import json, os, urllib.request; payload = json.dumps({"username": os.environ["MONITORAI_BOOTSTRAP_USERNAME"], "password": os.environ["MONITORAI_BOOTSTRAP_PASSWORD"]}).encode(); req = urllib.request.Request("http://127.0.0.1:8000/api/auth/login", data=payload, headers={"Content-Type": "application/json", "X-MonitorAI-Request": "1"}); response = urllib.request.urlopen(req); assert response.status == 200 and "Secure" in response.headers["Set-Cookie"]; print("Bootstrap sign-in: passed")'
+            echo "Preview healthy on loopback port 8002 with separate PostgreSQL storage."

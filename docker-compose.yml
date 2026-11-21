@@ -3,7 +3,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: monitorai-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-monitorai}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -25,7 +24,6 @@ services:
 
   app:
     image: ${DOCKER_IMAGE:-ghcr.io/sundarmohan/azure-architect-companion}:${IMAGE_TAG:-latest}
-    container_name: monitorai-app
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,7 +33,7 @@ services:
       MONITORAI_AZURE_ENCRYPTION_KEY: ${MONITORAI_AZURE_ENCRYPTION_KEY:-}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-monitorai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-monitorai}
     ports:
-      - "${APP_PORT:-8001}:8000"
+      - "127.0.0.1:8002:8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
