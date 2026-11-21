@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: ${DOCKER_IMAGE:-sms300/azure-architect-companion}:${IMAGE_TAG:-latest}
+    image: ${DOCKER_IMAGE:-ghcr.io/sundarmohan/azure-architect-companion}:${IMAGE_TAG:-latest}
     container_name: azure-architect-app
     depends_on:
       postgres:

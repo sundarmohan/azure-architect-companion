@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Configuration
 DEPLOYMENT_DIR="${DEPLOYMENT_DIR:-.}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-DOCKER_REGISTRY="sms300"
+DOCKER_REGISTRY="ghcr.io/sundarmohan"
 IMAGE_NAME="azure-architect-companion"
 MAX_RETRIES=30
 RETRY_INTERVAL=4
