@@ -15,6 +15,8 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Text,
+    Integer,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -48,11 +50,27 @@ class ArchitectureVersion(Base):
     """Represents a version of an architecture."""
 
     __tablename__ = "architecture_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "architecture_id", "version_number", name="uq_architecture_version_number"
+        ),
+        UniqueConstraint(
+            "architecture_id", "version_sequence", name="uq_architecture_version_sequence"
+        ),
+    )
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     architecture_id = Column(Uuid(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
     version_number = Column(String(50), nullable=False)  # e.g., "1.0", "2.1"
     status = Column(String(50), nullable=False, default="draft")  # draft, validated, deployed
+    version_sequence = Column(Integer, nullable=True)
+    parent_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=True, index=True)
+    change_description = Column(Text, nullable=True)
+    version_metadata = Column("metadata", JSON, nullable=True)
+    snapshot_hash = Column(String(64), nullable=True, index=True)
+    finalized_at = Column(DateTime(timezone=True), nullable=True)
+    validation_status = Column(String(50), nullable=True)
+    compliance_status = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     created_by = Column(String(255), nullable=True)
 
@@ -73,6 +91,17 @@ class ArchitectureVersion(Base):
         back_populates="architecture_version",
         cascade="all, delete-orphan",
     )
+    parent_version = relationship(
+        "ArchitectureVersion",
+        remote_side=[id],
+        foreign_keys=[parent_version_id],
+    )
+    version_events = relationship(
+        "ArchitectureVersionEvent",
+        back_populates="version",
+        cascade="all, delete-orphan",
+        order_by="ArchitectureVersionEvent.created_at",
+    )
 
     def __repr__(self) -> str:
         return f"<ArchitectureVersion(id={self.id}, version={self.version_number})>"
@@ -82,6 +111,11 @@ class Resource(Base):
     """Represents a single Azure resource in the architecture."""
 
     __tablename__ = "resources"
+    __table_args__ = (
+        UniqueConstraint(
+            "architecture_version_id", "resource_key", name="uq_version_resource_key"
+        ),
+    )
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
@@ -166,6 +200,22 @@ class Dependency(Base):
 
     def __repr__(self) -> str:
         return f"<Dependency(type={self.dependency_type}, required={self.required})>"
+
+
+class ArchitectureVersionEvent(Base):
+    """Append-only audit event for architecture version lifecycle actions."""
+
+    __tablename__ = "architecture_version_events"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_id = Column(Uuid(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    actor = Column(String(255), nullable=True)
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    version = relationship("ArchitectureVersion", back_populates="version_events")
 
 
 # ============================================================================
@@ -425,3 +475,212 @@ class ComplianceControlPolicy(Base):
 
     def __repr__(self) -> str:
         return f"<ComplianceControlPolicy(control_id={self.control_id}, level={self.policy_level})>"
+
+
+# ==================== TERRAFORM EXECUTION MODELS ====================
+
+
+class TerraformExecution(Base):
+    """Durable state for one generated Terraform plan/apply lifecycle."""
+
+    __tablename__ = "terraform_executions"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_id = Column(Uuid(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    state = Column(String(50), nullable=False, index=True)
+    generator_version = Column(String(50), nullable=True)
+    generation_hash = Column(String(64), nullable=True)
+    workspace_key = Column(String(255), nullable=True)
+    terraform_version = Column(String(100), nullable=True)
+    plan_filename = Column(String(255), nullable=True)
+    plan_artifact_hash = Column(String(64), nullable=True)
+    plan_summary = Column(JSON, nullable=True)
+    has_destructive_changes = Column(Boolean, nullable=False, default=False)
+    compliance_frameworks = Column(JSON, nullable=True)
+    azure_snapshot_id = Column(Uuid(as_uuid=True), ForeignKey("azure_intelligence_snapshots.id"), nullable=True, index=True)
+    azure_preflight_id = Column(Uuid(as_uuid=True), ForeignKey("azure_preflight_results.id"), nullable=True, index=True)
+    command_results = Column(JSON, nullable=True)
+    approved_generation_hash = Column(String(64), nullable=True)
+    approved_plan_hash = Column(String(64), nullable=True)
+    approved_by = Column(String(255), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejected_by = Column(String(255), nullable=True)
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    events = relationship(
+        "TerraformExecutionEvent",
+        back_populates="execution",
+        cascade="all, delete-orphan",
+        order_by="TerraformExecutionEvent.created_at",
+    )
+
+
+class TerraformExecutionEvent(Base):
+    """Append-only, secret-redacted audit event for an M7 execution."""
+
+    __tablename__ = "terraform_execution_events"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    execution_id = Column(Uuid(as_uuid=True), ForeignKey("terraform_executions.id"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    execution = relationship("TerraformExecution", back_populates="events")
+
+
+# ==================== AZURE RESOURCE INTELLIGENCE MODELS ====================
+
+
+class AzureConnection(Base):
+    """Credential-free identity for one configured Azure subscription scope."""
+
+    __tablename__ = "azure_connections"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "subscription_id", name="uq_azure_connection_scope"),
+    )
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id = Column(String(64), nullable=False)
+    subscription_id = Column(String(64), nullable=False, index=True)
+    display_name = Column(String(255), nullable=True)
+    credential_mode = Column(String(50), nullable=False, default="default")
+    status = Column(String(50), nullable=False, default="UNAVAILABLE")
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    snapshots = relationship("AzureIntelligenceSnapshot", back_populates="connection")
+
+
+class AzureIntelligenceSnapshot(Base):
+    """Immutable, normalized Azure evidence for one subscription scope."""
+
+    __tablename__ = "azure_intelligence_snapshots"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "snapshot_sequence", name="uq_azure_snapshot_sequence"),
+    )
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    connection_id = Column(Uuid(as_uuid=True), ForeignKey("azure_connections.id"), nullable=False, index=True)
+    subscription_id = Column(String(64), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=False)
+    snapshot_sequence = Column(Integer, nullable=False)
+    snapshot_hash = Column(String(64), nullable=False, index=True)
+    source_version = Column(String(50), nullable=False, default="m10-v1")
+    terraform_provider_version = Column(String(50), nullable=True)
+    subscription_metadata = Column(JSON, nullable=False, default=dict)
+    resource_groups = Column(JSON, nullable=False, default=list)
+    resource_types = Column(JSON, nullable=False, default=list)
+    regions = Column(JSON, nullable=False, default=list)
+    skus = Column(JSON, nullable=False, default=list)
+    providers = Column(JSON, nullable=False, default=list)
+    quotas = Column(JSON, nullable=False, default=list)
+    resources = Column(JSON, nullable=False, default=list)
+    retrieved_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    connection = relationship("AzureConnection", back_populates="snapshots")
+    preflight_results = relationship("AzurePreflightResult", back_populates="snapshot")
+    conformance_assessments = relationship("ConformanceAssessment", back_populates="azure_snapshot")
+
+
+class AzurePreflightResult(Base):
+    """Append-only Azure evidence associated with a canonical architecture version."""
+
+    __tablename__ = "azure_preflight_results"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_id = Column(Uuid(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    azure_snapshot_id = Column(Uuid(as_uuid=True), ForeignKey("azure_intelligence_snapshots.id"), nullable=False, index=True)
+    architecture_snapshot_hash = Column(String(64), nullable=False, index=True)
+    status = Column(String(50), nullable=False, index=True)
+    findings = Column(JSON, nullable=False, default=list)
+    result_hash = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    snapshot = relationship("AzureIntelligenceSnapshot", back_populates="preflight_results")
+
+
+class ConformanceAssessment(Base):
+    """Immutable comparison of one desired version with one M10 Azure snapshot."""
+
+    __tablename__ = "conformance_assessments"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    architecture_id = Column(Uuid(as_uuid=True), ForeignKey("architectures.id"), nullable=False, index=True)
+    architecture_version_id = Column(Uuid(as_uuid=True), ForeignKey("architecture_versions.id"), nullable=False, index=True)
+    azure_snapshot_id = Column(Uuid(as_uuid=True), ForeignKey("azure_intelligence_snapshots.id"), nullable=False, index=True)
+    terraform_execution_id = Column(Uuid(as_uuid=True), ForeignKey("terraform_executions.id"), nullable=True, index=True)
+    architecture_snapshot_hash = Column(String(64), nullable=False, index=True)
+    azure_snapshot_hash = Column(String(64), nullable=False, index=True)
+    terraform_generation_hash = Column(String(64), nullable=True)
+    terraform_plan_hash = Column(String(64), nullable=True)
+    terraform_execution_state = Column(String(50), nullable=True)
+    engine_version = Column(String(50), nullable=False)
+    comparison_hash = Column(String(64), nullable=False, index=True)
+    overall_status = Column(String(50), nullable=False, index=True)
+    summary = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    azure_snapshot = relationship("AzureIntelligenceSnapshot", back_populates="conformance_assessments")
+    findings = relationship(
+        "ConformanceFinding",
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        order_by="ConformanceFinding.finding_key",
+    )
+    events = relationship(
+        "ConformanceEvent",
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        order_by="ConformanceEvent.created_at",
+    )
+
+
+class ConformanceFinding(Base):
+    """Secret-safe normalized difference or evaluated resource result."""
+
+    __tablename__ = "conformance_findings"
+    __table_args__ = (
+        UniqueConstraint("assessment_id", "finding_key", name="uq_conformance_finding_key"),
+    )
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assessment_id = Column(Uuid(as_uuid=True), ForeignKey("conformance_assessments.id"), nullable=False, index=True)
+    finding_key = Column(String(64), nullable=False)
+    resource_key = Column(String(255), nullable=True, index=True)
+    resource_type = Column(String(255), nullable=True)
+    actual_resource_id = Column(Text, nullable=True)
+    category = Column(String(50), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, index=True)
+    status = Column(String(30), nullable=False, index=True)
+    desired_value_safe = Column(JSON, nullable=True)
+    actual_value_safe = Column(JSON, nullable=True)
+    property_path = Column(String(500), nullable=True)
+    explanation = Column(Text, nullable=False)
+    evidence = Column(JSON, nullable=False, default=dict)
+    desired_version = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    assessment = relationship("ConformanceAssessment", back_populates="findings")
+
+
+class ConformanceEvent(Base):
+    """Append-only, secret-safe M11 assessment audit event."""
+
+    __tablename__ = "conformance_events"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assessment_id = Column(Uuid(as_uuid=True), ForeignKey("conformance_assessments.id"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    details = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    assessment = relationship("ConformanceAssessment", back_populates="events")

@@ -70,6 +70,13 @@ cp .env.example .env
 
 4. Update DATABASE_URL in .env if needed
 
+For read-only Azure Resource Intelligence, configure `AZURE_TENANT_ID` and
+`AZURE_SUBSCRIPTION_ID`. The default credential mode uses Azure SDK
+`DefaultAzureCredential`; `client_secret` mode additionally requires runtime
+`AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`. Credentials are never persisted in
+architecture or intelligence records. Snapshot freshness defaults to 3600
+seconds and is configurable with `AZURE_INTELLIGENCE_CACHE_TTL_SECONDS`.
+
 ## Running the Application
 
 ```bash

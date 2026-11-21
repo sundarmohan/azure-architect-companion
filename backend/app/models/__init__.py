@@ -5,6 +5,7 @@ SQLAlchemy models package.
 from .models import (
     Architecture,
     ArchitectureVersion,
+    ArchitectureVersionEvent,
     Resource,
     Relationship,
     Dependency,
@@ -18,11 +19,20 @@ from .models import (
     ComplianceFramework,
     ComplianceControl,
     ComplianceControlPolicy,
+    TerraformExecution,
+    TerraformExecutionEvent,
+    AzureConnection,
+    AzureIntelligenceSnapshot,
+    AzurePreflightResult,
+    ConformanceAssessment,
+    ConformanceFinding,
+    ConformanceEvent,
 )
 
 __all__ = [
     "Architecture",
     "ArchitectureVersion",
+    "ArchitectureVersionEvent",
     "Resource",
     "Relationship",
     "Dependency",
@@ -36,4 +46,12 @@ __all__ = [
     "ComplianceFramework",
     "ComplianceControl",
     "ComplianceControlPolicy",
+    "TerraformExecution",
+    "TerraformExecutionEvent",
+    "AzureConnection",
+    "AzureIntelligenceSnapshot",
+    "AzurePreflightResult",
+    "ConformanceAssessment",
+    "ConformanceFinding",
+    "ConformanceEvent",
 ]

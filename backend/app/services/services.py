@@ -6,10 +6,13 @@ from typing import Optional, List
 from uuid import UUID
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from ..models import (
     Architecture,
     ArchitectureVersion,
+    ArchitectureVersionEvent,
     Resource,
     Relationship,
     Dependency,
@@ -22,8 +25,11 @@ from ..schemas import (
     ArchitectureUpdate,
     ArchitectureVersionCreate,
     ResourceCreate,
+    ResourceUpdate,
     RelationshipCreate,
+    RelationshipUpdate,
     DependencyCreate,
+    DependencyUpdate,
 )
 
 
@@ -91,18 +97,65 @@ class ArchitectureVersionService:
     ) -> Optional[ArchitectureVersion]:
         """Create a new architecture version."""
         # Verify architecture exists
-        architecture = ArchitectureService.get(db, architecture_id)
+        architecture = (
+            db.query(Architecture)
+            .filter(Architecture.id == architecture_id)
+            .with_for_update()
+            .first()
+        )
         if not architecture:
             return None
+
+        from .architecture_versioning import (
+            ArchitectureVersioningError,
+            ArchitectureVersioningService,
+        )
+
+        ArchitectureVersioningService.assert_safe_metadata(version.metadata)
+        ArchitectureVersioningService.assert_safe_description(
+            version.change_description
+        )
+        if version.status not in {"draft", "DRAFT"}:
+            raise ArchitectureVersioningError(
+                "INVALID_VERSION_STATUS",
+                "New architecture versions must start as DRAFT",
+            )
+
+        sequence = (
+            db.query(func.max(ArchitectureVersion.version_sequence))
+            .filter(ArchitectureVersion.architecture_id == architecture_id)
+            .scalar()
+            or 0
+        ) + 1
 
         db_version = ArchitectureVersion(
             architecture_id=architecture_id,
             version_number=version.version_number,
             status=version.status,
+            version_sequence=sequence,
+            change_description=version.change_description,
+            version_metadata=version.metadata,
             created_by=version.created_by,
         )
         db.add(db_version)
-        db.commit()
+        db.flush()
+        db.add(
+            ArchitectureVersionEvent(
+                architecture_id=architecture_id,
+                architecture_version_id=db_version.id,
+                event_type="VERSION_CREATED",
+                actor=version.created_by,
+                details={"source_version_id": None, "resource_count": 0},
+            )
+        )
+        try:
+            db.commit()
+        except IntegrityError as error:
+            db.rollback()
+            raise ArchitectureVersioningError(
+                "VERSION_NUMBER_CONFLICT",
+                "Architecture version number was allocated concurrently or already exists",
+            ) from error
         db.refresh(db_version)
         return db_version
 
@@ -116,7 +169,10 @@ class ArchitectureVersionService:
         """List all versions of an architecture."""
         return db.query(ArchitectureVersion).filter(
             ArchitectureVersion.architecture_id == architecture_id
-        ).order_by(ArchitectureVersion.version_number).all()
+        ).order_by(
+            ArchitectureVersion.version_sequence,
+            ArchitectureVersion.created_at,
+        ).all()
 
 
 class ResourceService:
@@ -133,6 +189,9 @@ class ResourceService:
         version = ArchitectureVersionService.get(db, architecture_version_id)
         if not version:
             return None
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
 
         # If parent_resource_id is specified, verify it exists and belongs to same version
         if resource.parent_resource_id:
@@ -179,6 +238,63 @@ class ResourceService:
             Resource.resource_type == resource_type,
         ).all()
 
+    @staticmethod
+    def update(
+        db: Session,
+        architecture_version_id: UUID,
+        resource_id: UUID,
+        update_data: ResourceUpdate,
+    ) -> Optional[Resource]:
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        resource = db.query(Resource).filter(
+            Resource.id == resource_id,
+            Resource.architecture_version_id == architecture_version_id,
+        ).first()
+        if not version or not resource:
+            return None
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+        values = update_data.model_dump(exclude_unset=True)
+        parent_id = values.get("parent_resource_id")
+        if parent_id is not None:
+            parent = db.query(Resource).filter(
+                Resource.id == parent_id,
+                Resource.architecture_version_id == architecture_version_id,
+            ).first()
+            if not parent or parent.id == resource.id:
+                raise ValueError("Parent resource not found, self-referencing, or belongs to another version")
+        for field, value in values.items():
+            setattr(resource, field, value)
+        db.commit()
+        db.refresh(resource)
+        return resource
+
+    @staticmethod
+    def delete(db: Session, architecture_version_id: UUID, resource_id: UUID) -> bool:
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        resource = db.query(Resource).filter(
+            Resource.id == resource_id,
+            Resource.architecture_version_id == architecture_version_id,
+        ).first()
+        if not version or not resource:
+            return False
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+        referenced = db.query(Relationship).filter(
+            (Relationship.source_resource_id == resource_id)
+            | (Relationship.target_resource_id == resource_id)
+        ).first() or db.query(Dependency).filter(
+            (Dependency.resource_id == resource_id)
+            | (Dependency.depends_on_resource_id == resource_id)
+        ).first()
+        if referenced:
+            raise ValueError("Remove relationships and dependencies before deleting this resource")
+        db.delete(resource)
+        db.commit()
+        return True
+
 
 class RelationshipService:
     """Service for managing relationships."""
@@ -190,6 +306,13 @@ class RelationshipService:
         relationship: RelationshipCreate,
     ) -> Optional[Relationship]:
         """Create a new relationship."""
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        if not version:
+            return None
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+
         # Verify both resources exist and belong to the same version
         source = db.query(Resource).filter(
             Resource.id == relationship.source_resource_id,
@@ -230,6 +353,45 @@ class RelationshipService:
             Relationship.architecture_version_id == architecture_version_id
         ).all()
 
+    @staticmethod
+    def update(
+        db: Session,
+        architecture_version_id: UUID,
+        relationship_id: UUID,
+        update_data: RelationshipUpdate,
+    ) -> Optional[Relationship]:
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        item = db.query(Relationship).filter(
+            Relationship.id == relationship_id,
+            Relationship.architecture_version_id == architecture_version_id,
+        ).first()
+        if not version or not item:
+            return None
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+        for field, value in update_data.model_dump(exclude_unset=True).items():
+            setattr(item, "relationship_metadata" if field == "metadata" else field, value)
+        db.commit()
+        db.refresh(item)
+        return item
+
+    @staticmethod
+    def delete(db: Session, architecture_version_id: UUID, relationship_id: UUID) -> bool:
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        item = db.query(Relationship).filter(
+            Relationship.id == relationship_id,
+            Relationship.architecture_version_id == architecture_version_id,
+        ).first()
+        if not version or not item:
+            return False
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+        db.delete(item)
+        db.commit()
+        return True
+
 
 class DependencyService:
     """Service for managing dependencies."""
@@ -241,6 +403,13 @@ class DependencyService:
         dependency: DependencyCreate,
     ) -> Optional[Dependency]:
         """Create a new dependency."""
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        if not version:
+            return None
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+
         # Verify both resources exist and belong to the same version
         resource = db.query(Resource).filter(
             Resource.id == dependency.resource_id,
@@ -288,6 +457,45 @@ class DependencyService:
         return db.query(Dependency).filter(
             Dependency.resource_id == resource_id
         ).all()
+
+    @staticmethod
+    def update(
+        db: Session,
+        architecture_version_id: UUID,
+        dependency_id: UUID,
+        update_data: DependencyUpdate,
+    ) -> Optional[Dependency]:
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        item = db.query(Dependency).filter(
+            Dependency.id == dependency_id,
+            Dependency.architecture_version_id == architecture_version_id,
+        ).first()
+        if not version or not item:
+            return None
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+        for field, value in update_data.model_dump(exclude_unset=True).items():
+            setattr(item, field, value)
+        db.commit()
+        db.refresh(item)
+        return item
+
+    @staticmethod
+    def delete(db: Session, architecture_version_id: UUID, dependency_id: UUID) -> bool:
+        version = ArchitectureVersionService.get(db, architecture_version_id)
+        item = db.query(Dependency).filter(
+            Dependency.id == dependency_id,
+            Dependency.architecture_version_id == architecture_version_id,
+        ).first()
+        if not version or not item:
+            return False
+        from .architecture_versioning import ArchitectureVersioningService
+
+        ArchitectureVersioningService.assert_editable(version)
+        db.delete(item)
+        db.commit()
+        return True
 
 
 # ============================================================================

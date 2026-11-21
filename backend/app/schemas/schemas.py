@@ -3,7 +3,7 @@ Pydantic schemas for API requests and responses.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
@@ -50,6 +50,27 @@ class ArchitectureVersionCreate(BaseModel):
     version_number: str = Field(..., min_length=1, max_length=50)
     status: str = Field(default="draft", max_length=50)
     created_by: Optional[str] = None
+    change_description: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class ArchitectureSnapshotCreate(BaseModel):
+    """Create a complete draft snapshot from an existing version."""
+
+    source_version_id: UUID
+    change_description: Optional[str] = None
+    created_by: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class ArchitectureVersionActivateRequest(BaseModel):
+    actor: Optional[str] = None
+
+
+class ArchitectureVersionRevertRequest(BaseModel):
+    target_version_id: UUID
+    change_description: Optional[str] = None
+    created_by: Optional[str] = None
 
 
 class ArchitectureVersionUpdate(BaseModel):
@@ -66,11 +87,46 @@ class ArchitectureVersionResponse(BaseModel):
     architecture_id: UUID
     version_number: str
     status: str
+    version_sequence: Optional[int] = None
+    parent_version_id: Optional[UUID] = None
+    change_description: Optional[str] = None
+    metadata: Optional[dict] = Field(None, validation_alias="version_metadata")
+    snapshot_hash: Optional[str] = None
+    finalized_at: Optional[datetime] = None
+    validation_status: Optional[str] = None
+    compliance_status: Optional[str] = None
     created_at: datetime
     created_by: Optional[str]
 
     class Config:
         from_attributes = True
+
+
+class ArchitectureVersionEventResponse(BaseModel):
+    id: UUID
+    architecture_id: UUID
+    architecture_version_id: UUID
+    event_type: str
+    actor: Optional[str] = None
+    details: Optional[dict] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ArchitectureVersionComparisonResponse(BaseModel):
+    architecture_id: UUID
+    from_version_id: UUID
+    to_version_id: UUID
+    from_snapshot_hash: str
+    to_snapshot_hash: str
+    has_changes: bool
+    resource_changes: List[dict]
+    relationship_changes: List[dict]
+    dependency_changes: List[dict]
+    hierarchy_changes: List[dict]
+    summary: dict
 
 
 # ==================== Resource Schemas ====================
@@ -285,6 +341,10 @@ class ResourceCatalogDetailResponse(BaseModel):
     optional_dependencies: List[CatalogDependencyResponse]
     valid_parent_types: List[str]
     valid_child_types: List[str]
+    networking_requirements: List[str] = Field(default_factory=list)
+    security_requirements: List[str] = Field(default_factory=list)
+    monitoring_requirements: List[str] = Field(default_factory=list)
+    backup_requirements: List[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -487,6 +547,8 @@ class TerraformGenerationRequest(BaseModel):
     """Optional comparison input for Terraform generation."""
 
     compare_to_version_id: Optional[UUID] = None
+    mode: str = Field(default="STATIC_ONLY", pattern="^(STATIC_ONLY|AZURE_VALIDATED)$")
+    azure_preflight_id: Optional[UUID] = None
 
 
 class TerraformGenerationFindingResponse(BaseModel):
@@ -523,6 +585,9 @@ class TerraformGenerationResponse(BaseModel):
     resources_processed: int
     resources_unsupported: List[UUID] = Field(default_factory=list)
     changed_files: List[str] = Field(default_factory=list)
+    intelligence_mode: str = "STATIC_ONLY"
+    azure_snapshot_id: Optional[UUID] = None
+    azure_preflight_id: Optional[UUID] = None
 
 
 class TerraformResourceChangeResponse(BaseModel):
@@ -548,3 +613,270 @@ class TerraformChangeAnalysisResponse(BaseModel):
     resource_changes: List[TerraformResourceChangeResponse] = Field(default_factory=list)
     affected_files: List[str] = Field(default_factory=list)
     unchanged_files: List[str] = Field(default_factory=list)
+
+
+# ==================== TERRAFORM EXECUTION SCHEMAS ====================
+
+
+class TerraformExecutionPrepareRequest(BaseModel):
+    """Inputs for preparing an isolated Terraform execution workspace."""
+
+    compliance_frameworks: List[str] = Field(default_factory=list)
+    azure_preflight_id: Optional[UUID] = None
+
+
+class TerraformApprovalRequest(BaseModel):
+    """Explicit approval for an exact saved plan artifact."""
+
+    approved_by: str = Field(..., min_length=1, max_length=255)
+    confirm_destructive: bool = False
+
+
+class TerraformRejectionRequest(BaseModel):
+    """Explicit rejection of a saved plan."""
+
+    rejected_by: str = Field(..., min_length=1, max_length=255)
+    reason: Optional[str] = Field(None, max_length=2000)
+
+
+class TerraformCommandResultResponse(BaseModel):
+    """Secret-redacted result from an approved Terraform command."""
+
+    operation: str
+    status: str
+    exit_code: Optional[int] = None
+    stdout: str = ""
+    stderr: str = ""
+    error_code: Optional[str] = None
+
+
+class TerraformPlanChangeResponse(BaseModel):
+    """Normalized resource change from Terraform plan JSON."""
+
+    address: str
+    action: str
+    actions: List[str] = Field(default_factory=list)
+    destructive: bool = False
+
+
+class TerraformPlanSummaryResponse(BaseModel):
+    """Normalized Terraform plan change summary."""
+
+    add: int = 0
+    change: int = 0
+    destroy: int = 0
+    replace: int = 0
+    no_change: int = 0
+    changes: List[TerraformPlanChangeResponse] = Field(default_factory=list)
+
+
+class TerraformExecutionResponse(BaseModel):
+    """Persistent Terraform execution lifecycle state."""
+
+    id: UUID
+    architecture_id: UUID
+    architecture_version_id: UUID
+    state: str
+    generator_version: Optional[str] = None
+    generation_hash: Optional[str] = None
+    workspace_key: Optional[str] = None
+    terraform_version: Optional[str] = None
+    plan_summary: Optional[TerraformPlanSummaryResponse] = None
+    has_destructive_changes: bool
+    compliance_frameworks: List[str] = Field(default_factory=list)
+    azure_snapshot_id: Optional[UUID] = None
+    azure_preflight_id: Optional[UUID] = None
+    command_results: dict = Field(default_factory=dict)
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejected_by: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TerraformExecutionEventResponse(BaseModel):
+    """Secret-redacted execution audit event."""
+
+    id: UUID
+    execution_id: UUID
+    event_type: str
+    details: Optional[dict] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== AZURE RESOURCE INTELLIGENCE SCHEMAS ====================
+
+
+class AzureIntelligenceRefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    regions: List[str] = Field(default_factory=list)
+    terraform_provider_version: Optional[str] = Field(None, max_length=50)
+
+
+class AzurePreflightRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: Optional[UUID] = None
+
+
+class AzureConnectionStatusResponse(BaseModel):
+    status: str
+    tenant_id: Optional[str] = None
+    subscription_id: Optional[str] = None
+    subscription: Optional[dict[str, Any]] = None
+    message: str
+    error_code: Optional[str] = None
+
+
+class AzureFreshnessResponse(BaseModel):
+    fresh: bool
+    freshness: str
+    retrieved_at: datetime
+    expires_at: datetime
+
+
+class AzureIntelligenceSnapshotResponse(BaseModel):
+    id: UUID
+    connection_id: UUID
+    subscription_id: str
+    tenant_id: str
+    snapshot_sequence: int
+    snapshot_hash: str
+    source_version: str
+    terraform_provider_version: Optional[str] = None
+    subscription_metadata: dict[str, Any] = Field(default_factory=dict)
+    resource_groups: List[dict[str, Any]] = Field(default_factory=list)
+    resource_types: List[dict[str, Any]] = Field(default_factory=list)
+    regions: List[dict[str, Any]] = Field(default_factory=list)
+    skus: List[dict[str, Any]] = Field(default_factory=list)
+    providers: List[dict[str, Any]] = Field(default_factory=list)
+    quotas: List[dict[str, Any]] = Field(default_factory=list)
+    resources: List[dict[str, Any]] = Field(default_factory=list)
+    retrieved_at: datetime
+    expires_at: datetime
+    fresh: bool
+    freshness: str
+
+
+class AzureIntelligenceEvidenceResponse(BaseModel):
+    status: str
+    resource_type: Optional[str] = None
+    region: Optional[str] = None
+    provider_namespace: Optional[str] = None
+    sku: Optional[str] = None
+    tier: Optional[str] = None
+    api_version: Optional[str] = None
+    api_versions: List[str] = Field(default_factory=list)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    restrictions: List[Any] = Field(default_factory=list)
+    evidence: Optional[str] = None
+    source: str
+    retrieved_at: datetime
+    expires_at: Optional[datetime] = None
+    fresh: Optional[bool] = None
+    freshness: Optional[str] = None
+
+
+class AzureProviderResponse(BaseModel):
+    provider_namespace: str
+    status: str
+    source: str
+    retrieved_at: datetime
+    expires_at: datetime
+    fresh: bool
+    freshness: str
+
+
+class AzurePreflightResultResponse(BaseModel):
+    id: UUID
+    architecture_id: UUID
+    architecture_version_id: UUID
+    azure_snapshot_id: UUID
+    architecture_snapshot_hash: str
+    status: str
+    findings: List[dict[str, Any]] = Field(default_factory=list)
+    result_hash: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ==================== CONFORMANCE AND DRIFT SCHEMAS ====================
+
+
+class ConformanceAssessmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    azure_snapshot_id: UUID
+    terraform_execution_id: Optional[UUID] = None
+
+
+class ConformanceFindingResponse(BaseModel):
+    id: UUID
+    finding_key: str
+    resource_key: Optional[str] = None
+    resource_type: Optional[str] = None
+    actual_resource_id: Optional[str] = None
+    category: str
+    severity: str
+    status: str
+    desired_value_safe: Any = None
+    actual_value_safe: Any = None
+    property_path: Optional[str] = None
+    explanation: str
+    evidence: dict[str, Any]
+    desired_version: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConformanceEventResponse(BaseModel):
+    id: UUID
+    event_type: str
+    details: dict[str, Any]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConformanceAssessmentResponse(BaseModel):
+    id: UUID
+    architecture_id: UUID
+    architecture_version_id: UUID
+    azure_snapshot_id: UUID
+    terraform_execution_id: Optional[UUID] = None
+    architecture_snapshot_hash: str
+    azure_snapshot_hash: str
+    terraform_generation_hash: Optional[str] = None
+    terraform_plan_hash: Optional[str] = None
+    terraform_execution_state: Optional[str] = None
+    engine_version: str
+    comparison_hash: str
+    overall_status: str
+    summary: dict[str, Any]
+    findings: List[ConformanceFindingResponse] = Field(default_factory=list)
+    events: List[ConformanceEventResponse] = Field(default_factory=list)
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DriftHistoryComparisonResponse(BaseModel):
+    architecture_id: UUID
+    architecture_version_id: UUID
+    from_assessment_id: UUID
+    to_assessment_id: UUID
+    new_drift: List[dict[str, Any]] = Field(default_factory=list)
+    resolved_drift: List[dict[str, Any]] = Field(default_factory=list)
+    persistent_drift: List[dict[str, Any]] = Field(default_factory=list)

@@ -2,7 +2,7 @@
 FastAPI routes for the API.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,18 +21,34 @@ from ..services import (
     ComplianceFrameworkService,
     ComplianceEngine,
     TerraformGenerator,
+    TerraformExecutionError,
+    TerraformExecutionService,
+    ArchitectureVersioningError,
+    ArchitectureVersioningService,
+    AzureIntelligenceError,
+    AzureResourceIntelligenceService,
+    ConformanceEngine,
+    ConformanceError,
 )
 from ..schemas import (
     ArchitectureCreate,
     ArchitectureUpdate,
     ArchitectureResponse,
     ArchitectureVersionCreate,
+    ArchitectureSnapshotCreate,
+    ArchitectureVersionActivateRequest,
+    ArchitectureVersionRevertRequest,
     ArchitectureVersionResponse,
+    ArchitectureVersionComparisonResponse,
+    ArchitectureVersionEventResponse,
     ResourceCreate,
+    ResourceUpdate,
     ResourceResponse,
     RelationshipCreate,
+    RelationshipUpdate,
     RelationshipResponse,
     DependencyCreate,
+    DependencyUpdate,
     DependencyResponse,
     ResourceCatalogResponse,
     ResourceCatalogDetailResponse,
@@ -53,6 +69,21 @@ from ..schemas import (
     TerraformGenerationRequest,
     TerraformGenerationResponse,
     TerraformChangeAnalysisResponse,
+    TerraformExecutionPrepareRequest,
+    TerraformApprovalRequest,
+    TerraformRejectionRequest,
+    TerraformExecutionResponse,
+    TerraformExecutionEventResponse,
+    AzureIntelligenceRefreshRequest,
+    AzurePreflightRequest,
+    AzureConnectionStatusResponse,
+    AzureIntelligenceSnapshotResponse,
+    AzureIntelligenceEvidenceResponse,
+    AzureProviderResponse,
+    AzurePreflightResultResponse,
+    ConformanceAssessmentRequest,
+    ConformanceAssessmentResponse,
+    DriftHistoryComparisonResponse,
 )
 
 router = APIRouter()
@@ -132,17 +163,140 @@ def delete_architecture(
 )
 def create_version(
     architecture_id: UUID,
-    version: ArchitectureVersionCreate,
+    version: Union[ArchitectureSnapshotCreate, ArchitectureVersionCreate],
     db: Session = Depends(get_db),
 ) -> ArchitectureVersionResponse:
     """Create a new version of an architecture."""
-    db_version = ArchitectureVersionService.create(db, architecture_id, version)
+    if isinstance(version, ArchitectureSnapshotCreate):
+        try:
+            return ArchitectureVersioningService.create_version(
+                db,
+                architecture_id,
+                version.source_version_id,
+                version.change_description,
+                version.created_by,
+                version.metadata,
+            )
+        except ArchitectureVersioningError as error:
+            raise _versioning_http_error(error) from error
+    try:
+        db_version = ArchitectureVersionService.create(db, architecture_id, version)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
     if not db_version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Architecture not found",
         )
     return db_version
+
+
+@router.post(
+    "/architectures/{architecture_id}/versions/{version_id}/activate",
+    response_model=ArchitectureVersionResponse,
+)
+def activate_version(
+    architecture_id: UUID,
+    version_id: UUID,
+    request: ArchitectureVersionActivateRequest,
+    db: Session = Depends(get_db),
+) -> ArchitectureVersionResponse:
+    """Finalize and activate an architecture snapshot."""
+    try:
+        return ArchitectureVersioningService.activate(
+            db, architecture_id, version_id, request.actor
+        )
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+
+
+@router.post(
+    "/architectures/{architecture_id}/versions/{target_version_id}/revert",
+    response_model=ArchitectureVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def revert_version(
+    architecture_id: UUID,
+    target_version_id: UUID,
+    request: ArchitectureVersionRevertRequest,
+    db: Session = Depends(get_db),
+) -> ArchitectureVersionResponse:
+    """Create a new draft snapshot equivalent to an earlier version."""
+    if request.target_version_id != target_version_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "TARGET_VERSION_MISMATCH", "message": "Path and request target versions differ"},
+        )
+    try:
+        return ArchitectureVersioningService.revert(
+            db,
+            architecture_id,
+            target_version_id,
+            request.change_description,
+            request.created_by,
+        )
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{from_version_id}/compare/{to_version_id}",
+    response_model=ArchitectureVersionComparisonResponse,
+)
+def compare_architecture_versions(
+    architecture_id: UUID,
+    from_version_id: UUID,
+    to_version_id: UUID,
+    db: Session = Depends(get_db),
+) -> ArchitectureVersionComparisonResponse:
+    """Compare two complete canonical architecture snapshots."""
+    try:
+        return ArchitectureVersioningService.compare_versions(
+            db, architecture_id, from_version_id, to_version_id
+        )
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/events",
+    response_model=List[ArchitectureVersionEventResponse],
+)
+def list_version_events(
+    architecture_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+) -> List[ArchitectureVersionEventResponse]:
+    """List append-only audit events for an architecture version."""
+    try:
+        return ArchitectureVersioningService.list_events(
+            db, architecture_id, version_id
+        )
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+
+
+def _versioning_http_error(error: ArchitectureVersioningError) -> HTTPException:
+    if error.code in {"ARCHITECTURE_NOT_FOUND", "VERSION_NOT_FOUND"}:
+        status_code = status.HTTP_404_NOT_FOUND
+    elif error.code in {
+        "NO_CHANGES",
+        "VERSION_IMMUTABLE",
+        "VERSION_NOT_DRAFT",
+        "VERSION_ACTIVATION_CONFLICT",
+        "VERSION_NUMBER_CONFLICT",
+    }:
+        status_code = status.HTTP_409_CONFLICT
+    else:
+        status_code = status.HTTP_400_BAD_REQUEST
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "code": error.code,
+            "message": error.message,
+            **({"details": error.details} if error.details is not None else {}),
+        },
+    )
 
 
 @router.get(
@@ -265,6 +419,54 @@ def list_resources(
     return ResourceService.list_by_version(db, version_id)
 
 
+@router.put(
+    "/architectures/{architecture_id}/versions/{version_id}/resources/{resource_id}",
+    response_model=ResourceResponse,
+)
+def update_resource(
+    architecture_id: UUID,
+    version_id: UUID,
+    resource_id: UUID,
+    resource: ResourceUpdate,
+    db: Session = Depends(get_db),
+) -> ResourceResponse:
+    version = ArchitectureVersionService.get(db, version_id)
+    if not version or version.architecture_id != architecture_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        updated = ResourceService.update(db, version_id, resource_id, resource)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if not updated:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return updated
+
+
+@router.delete(
+    "/architectures/{architecture_id}/versions/{version_id}/resources/{resource_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_resource(
+    architecture_id: UUID,
+    version_id: UUID,
+    resource_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    version = ArchitectureVersionService.get(db, version_id)
+    if not version or version.architecture_id != architecture_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        deleted = ResourceService.delete(db, version_id, resource_id)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+
 # ==================== Relationship Endpoints ====================
 
 
@@ -321,6 +523,50 @@ def list_relationships(
     return RelationshipService.list_by_version(db, version_id)
 
 
+@router.put(
+    "/architectures/{architecture_id}/versions/{version_id}/relationships/{relationship_id}",
+    response_model=RelationshipResponse,
+)
+def update_relationship(
+    architecture_id: UUID,
+    version_id: UUID,
+    relationship_id: UUID,
+    relationship: RelationshipUpdate,
+    db: Session = Depends(get_db),
+) -> RelationshipResponse:
+    version = ArchitectureVersionService.get(db, version_id)
+    if not version or version.architecture_id != architecture_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        updated = RelationshipService.update(db, version_id, relationship_id, relationship)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+    if not updated:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    return updated
+
+
+@router.delete(
+    "/architectures/{architecture_id}/versions/{version_id}/relationships/{relationship_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_relationship(
+    architecture_id: UUID,
+    version_id: UUID,
+    relationship_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    version = ArchitectureVersionService.get(db, version_id)
+    if not version or version.architecture_id != architecture_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        deleted = RelationshipService.delete(db, version_id, relationship_id)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+
+
 # ==================== Dependency Endpoints ====================
 
 
@@ -375,6 +621,50 @@ def list_dependencies(
             detail="Version not found",
         )
     return DependencyService.list_by_version(db, version_id)
+
+
+@router.put(
+    "/architectures/{architecture_id}/versions/{version_id}/dependencies/{dependency_id}",
+    response_model=DependencyResponse,
+)
+def update_dependency(
+    architecture_id: UUID,
+    version_id: UUID,
+    dependency_id: UUID,
+    dependency: DependencyUpdate,
+    db: Session = Depends(get_db),
+) -> DependencyResponse:
+    version = ArchitectureVersionService.get(db, version_id)
+    if not version or version.architecture_id != architecture_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        updated = DependencyService.update(db, version_id, dependency_id, dependency)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+    if not updated:
+        raise HTTPException(status_code=404, detail="Dependency not found")
+    return updated
+
+
+@router.delete(
+    "/architectures/{architecture_id}/versions/{version_id}/dependencies/{dependency_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_dependency(
+    architecture_id: UUID,
+    version_id: UUID,
+    dependency_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    version = ArchitectureVersionService.get(db, version_id)
+    if not version or version.architecture_id != architecture_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        deleted = DependencyService.delete(db, version_id, dependency_id)
+    except ArchitectureVersioningError as error:
+        raise _versioning_http_error(error) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Dependency not found")
 
 
 # ==================== Resource Catalog Endpoints ====================
@@ -480,6 +770,10 @@ def get_catalog_resource(
         optional_dependencies=[CatalogDependencyResponse.model_validate(dep) for dep in optional],
         valid_parent_types=valid_parents,
         valid_child_types=valid_children,
+        networking_requirements=[item.requirement for item in resource.networking_requirements],
+        security_requirements=[item.requirement for item in resource.security_requirements],
+        monitoring_requirements=[item.requirement for item in resource.monitoring_requirements],
+        backup_requirements=[item.requirement for item in resource.backup_requirements],
         created_at=resource.created_at,
         updated_at=resource.updated_at,
     )
@@ -498,7 +792,7 @@ def list_catalog_categories(
 
 
 @router.get(
-    "/architectures/{architecture_id}/versions/{version_id}/dependencies",
+    "/architectures/{architecture_id}/versions/{version_id}/dependency-analysis",
     response_model=ArchitectureDependencyAnalysisResponse,
 )
 def analyze_architecture_dependencies(
@@ -621,6 +915,8 @@ def generate_terraform(
             architecture_id,
             version_id,
             request.compare_to_version_id if request else None,
+            request.mode if request else "STATIC_ONLY",
+            request.azure_preflight_id if request else None,
         )
         return TerraformGenerationResponse(**result)
     except ValueError as error:
@@ -672,6 +968,425 @@ def analyze_terraform_changes(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         )
+
+
+# ==================== TERRAFORM EXECUTION ENDPOINTS ====================
+
+
+def _raise_execution_http_error(error: TerraformExecutionError) -> None:
+    status_code = (
+        status.HTTP_404_NOT_FOUND
+        if error.code == "EXECUTION_NOT_FOUND"
+        else status.HTTP_409_CONFLICT
+        if error.code
+        in {
+            "DESTRUCTIVE_APPROVAL_REQUIRED",
+            "EXECUTION_LOCKED",
+            "INVALID_EXECUTION_STATE",
+        }
+        else status.HTTP_400_BAD_REQUEST
+    )
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": error.code, "message": error.message},
+    )
+
+
+@router.post(
+    "/architectures/{architecture_id}/versions/{version_id}/terraform/executions",
+    response_model=TerraformExecutionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def prepare_terraform_execution(
+    architecture_id: UUID,
+    version_id: UUID,
+    request: TerraformExecutionPrepareRequest,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    """Generate Terraform and prepare an isolated execution workspace."""
+    try:
+        return TerraformExecutionService.prepare_workspace(
+            db,
+            architecture_id,
+            version_id,
+            request.compliance_frameworks,
+            request.azure_preflight_id,
+        )
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+
+
+@router.get(
+    "/terraform/executions/{execution_id}",
+    response_model=TerraformExecutionResponse,
+)
+def get_terraform_execution(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    execution = TerraformExecutionService.get_execution(db, execution_id)
+    if execution is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Terraform execution not found",
+        )
+    return execution
+
+
+@router.post(
+    "/terraform/executions/{execution_id}/initialize",
+    response_model=TerraformExecutionResponse,
+)
+def initialize_terraform(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    try:
+        return TerraformExecutionService.initialize(db, execution_id)
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+
+
+@router.post(
+    "/terraform/executions/{execution_id}/validate",
+    response_model=TerraformExecutionResponse,
+)
+def validate_terraform(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    try:
+        return TerraformExecutionService.validate(db, execution_id)
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+
+
+@router.post(
+    "/terraform/executions/{execution_id}/plan",
+    response_model=TerraformExecutionResponse,
+)
+def create_terraform_plan(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    try:
+        return TerraformExecutionService.create_plan(db, execution_id)
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+
+
+@router.post(
+    "/terraform/executions/{execution_id}/approve",
+    response_model=TerraformExecutionResponse,
+)
+def approve_terraform_plan(
+    execution_id: UUID,
+    request: TerraformApprovalRequest,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    try:
+        return TerraformExecutionService.approve_plan(
+            db,
+            execution_id,
+            request.approved_by,
+            request.confirm_destructive,
+        )
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+
+
+@router.post(
+    "/terraform/executions/{execution_id}/reject",
+    response_model=TerraformExecutionResponse,
+)
+def reject_terraform_plan(
+    execution_id: UUID,
+    request: TerraformRejectionRequest,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    try:
+        return TerraformExecutionService.reject_plan(
+            db, execution_id, request.rejected_by, request.reason
+        )
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+
+
+@router.post(
+    "/terraform/executions/{execution_id}/apply",
+    response_model=TerraformExecutionResponse,
+)
+def apply_terraform_plan(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+) -> TerraformExecutionResponse:
+    try:
+        return TerraformExecutionService.apply_approved_plan(db, execution_id)
+    except TerraformExecutionError as error:
+        _raise_execution_http_error(error)
+
+
+@router.get(
+    "/terraform/executions/{execution_id}/events",
+    response_model=List[TerraformExecutionEventResponse],
+)
+def list_terraform_execution_events(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+) -> List[TerraformExecutionEventResponse]:
+    if TerraformExecutionService.get_execution(db, execution_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Terraform execution not found",
+        )
+    return TerraformExecutionService.list_events(db, execution_id)
+
+
+# ==================== AZURE RESOURCE INTELLIGENCE ENDPOINTS ====================
+
+
+def _raise_azure_http_error(error: AzureIntelligenceError) -> None:
+    raise HTTPException(
+        status_code=error.status_code,
+        detail={"code": error.code, "message": str(error)},
+    )
+
+
+def _azure_snapshot_response(snapshot) -> dict:
+    return {
+        "id": snapshot.id,
+        "connection_id": snapshot.connection_id,
+        "subscription_id": snapshot.subscription_id,
+        "tenant_id": snapshot.tenant_id,
+        "snapshot_sequence": snapshot.snapshot_sequence,
+        "snapshot_hash": snapshot.snapshot_hash,
+        "source_version": snapshot.source_version,
+        "terraform_provider_version": snapshot.terraform_provider_version,
+        "subscription_metadata": snapshot.subscription_metadata or {},
+        "resource_groups": snapshot.resource_groups or [],
+        "resource_types": snapshot.resource_types or [],
+        "regions": snapshot.regions or [],
+        "skus": snapshot.skus or [],
+        "providers": snapshot.providers or [],
+        "quotas": snapshot.quotas or [],
+        "resources": snapshot.resources or [],
+        "retrieved_at": snapshot.retrieved_at,
+        "expires_at": snapshot.expires_at,
+        **AzureResourceIntelligenceService.freshness(snapshot),
+    }
+
+
+def _latest_azure_snapshot(db: Session):
+    snapshot = AzureResourceIntelligenceService.latest_snapshot(db)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "AZURE_SNAPSHOT_NOT_FOUND", "message": "No Azure intelligence snapshot is available"},
+        )
+    return snapshot
+
+
+@router.get("/azure/intelligence/status", response_model=AzureConnectionStatusResponse)
+def get_azure_intelligence_status() -> AzureConnectionStatusResponse:
+    return AzureConnectionStatusResponse(**AzureResourceIntelligenceService.connection_status())
+
+
+@router.post("/azure/intelligence/refresh", response_model=AzureIntelligenceSnapshotResponse, status_code=status.HTTP_201_CREATED)
+def refresh_azure_intelligence(
+    request: AzureIntelligenceRefreshRequest,
+    db: Session = Depends(get_db),
+) -> AzureIntelligenceSnapshotResponse:
+    try:
+        snapshot = AzureResourceIntelligenceService.refresh(
+            db,
+            regions=request.regions,
+            terraform_provider_version=request.terraform_provider_version,
+        )
+        return AzureIntelligenceSnapshotResponse(**_azure_snapshot_response(snapshot))
+    except AzureIntelligenceError as error:
+        _raise_azure_http_error(error)
+
+
+@router.get("/azure/intelligence/snapshots", response_model=List[AzureIntelligenceSnapshotResponse])
+def list_azure_intelligence_snapshots(db: Session = Depends(get_db)) -> List[AzureIntelligenceSnapshotResponse]:
+    return [AzureIntelligenceSnapshotResponse(**_azure_snapshot_response(item)) for item in AzureResourceIntelligenceService.list_snapshots(db)]
+
+
+@router.get("/azure/intelligence/snapshots/{snapshot_id}", response_model=AzureIntelligenceSnapshotResponse)
+def get_azure_intelligence_snapshot(snapshot_id: UUID, db: Session = Depends(get_db)) -> AzureIntelligenceSnapshotResponse:
+    snapshot = AzureResourceIntelligenceService.get_snapshot(db, snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "AZURE_SNAPSHOT_NOT_FOUND", "message": "Azure intelligence snapshot not found"})
+    return AzureIntelligenceSnapshotResponse(**_azure_snapshot_response(snapshot))
+
+
+@router.get("/azure/intelligence/resource-types", response_model=List[dict])
+def list_azure_resource_types(db: Session = Depends(get_db)) -> List[dict]:
+    snapshot = _latest_azure_snapshot(db)
+    freshness = AzureResourceIntelligenceService.freshness(snapshot)
+    return [{**item, **freshness} for item in (snapshot.resource_types or [])]
+
+
+@router.get("/azure/intelligence/resource-types/{resource_type:path}/regions", response_model=Union[AzureIntelligenceEvidenceResponse, dict])
+def get_azure_resource_type_region(resource_type: str, region: Optional[str] = None, db: Session = Depends(get_db)) -> Union[AzureIntelligenceEvidenceResponse, dict]:
+    snapshot = _latest_azure_snapshot(db)
+    if region is not None:
+        return AzureIntelligenceEvidenceResponse(**AzureResourceIntelligenceService.region_intelligence(snapshot, resource_type, region))
+    metadata = AzureResourceIntelligenceService._resource_type(snapshot, resource_type)
+    return {"resource_type": resource_type, "regions": (metadata or {}).get("locations", []), **AzureResourceIntelligenceService.freshness(snapshot)}
+
+
+@router.get("/azure/intelligence/resource-types/{resource_type:path}/skus", response_model=List[dict])
+def list_azure_resource_type_skus(resource_type: str, region: Optional[str] = None, db: Session = Depends(get_db)) -> List[dict]:
+    snapshot = _latest_azure_snapshot(db)
+    items = [item for item in (snapshot.skus or []) if AzureResourceIntelligenceService._same(item.get("resource_type"), resource_type)]
+    if region:
+        items = [item for item in items if AzureResourceIntelligenceService._location_matches(region, item.get("locations") or [], snapshot.regions or [])]
+    freshness = AzureResourceIntelligenceService.freshness(snapshot)
+    return [{**item, **freshness} for item in items]
+
+
+@router.get("/azure/intelligence/resource-types/{resource_type:path}", response_model=AzureIntelligenceEvidenceResponse)
+def get_azure_resource_type(resource_type: str, region: Optional[str] = None, db: Session = Depends(get_db)) -> AzureIntelligenceEvidenceResponse:
+    return AzureIntelligenceEvidenceResponse(**AzureResourceIntelligenceService.resource_type_intelligence(_latest_azure_snapshot(db), resource_type, region))
+
+
+@router.get("/azure/intelligence/providers", response_model=List[AzureProviderResponse])
+def list_azure_providers(db: Session = Depends(get_db)) -> List[AzureProviderResponse]:
+    snapshot = _latest_azure_snapshot(db)
+    return [AzureProviderResponse(**AzureResourceIntelligenceService.provider_intelligence(snapshot, item.get("namespace", ""))) for item in (snapshot.providers or [])]
+
+
+@router.get("/azure/intelligence/quotas/{quota_name}", response_model=dict)
+def get_azure_quota(quota_name: str, region: str, required: float = 0, db: Session = Depends(get_db)) -> dict:
+    return AzureResourceIntelligenceService.quota_intelligence(_latest_azure_snapshot(db), quota_name, region, required)
+
+
+@router.post("/architectures/{architecture_id}/versions/{version_id}/azure-preflight", response_model=AzurePreflightResultResponse, status_code=status.HTTP_201_CREATED)
+def run_azure_preflight(
+    architecture_id: UUID,
+    version_id: UUID,
+    request: AzurePreflightRequest,
+    db: Session = Depends(get_db),
+) -> AzurePreflightResultResponse:
+    try:
+        return AzureResourceIntelligenceService.preflight(db, architecture_id, version_id, request.snapshot_id)
+    except AzureIntelligenceError as error:
+        _raise_azure_http_error(error)
+
+
+# ==================== CONFORMANCE AND DRIFT ENDPOINTS ====================
+
+
+def _raise_conformance_http_error(error: ConformanceError) -> None:
+    raise HTTPException(
+        status_code=error.status_code,
+        detail={"code": error.code, "message": str(error)},
+    )
+
+
+@router.post(
+    "/architectures/{architecture_id}/versions/{version_id}/conformance",
+    response_model=ConformanceAssessmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def run_conformance_assessment(
+    architecture_id: UUID,
+    version_id: UUID,
+    request: ConformanceAssessmentRequest,
+    db: Session = Depends(get_db),
+) -> ConformanceAssessmentResponse:
+    try:
+        return ConformanceEngine.assess(
+            db,
+            architecture_id,
+            version_id,
+            request.azure_snapshot_id,
+            request.terraform_execution_id,
+        )
+    except ConformanceError as error:
+        _raise_conformance_http_error(error)
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/conformance",
+    response_model=List[ConformanceAssessmentResponse],
+)
+def list_conformance_assessments(
+    architecture_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+) -> List[ConformanceAssessmentResponse]:
+    try:
+        return ConformanceEngine.list_assessments(db, architecture_id, version_id)
+    except ConformanceError as error:
+        _raise_conformance_http_error(error)
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/drift",
+    response_model=Optional[ConformanceAssessmentResponse],
+)
+def get_latest_drift_assessment(
+    architecture_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+) -> Optional[ConformanceAssessmentResponse]:
+    try:
+        assessments = ConformanceEngine.list_assessments(db, architecture_id, version_id)
+        return assessments[0] if assessments else None
+    except ConformanceError as error:
+        _raise_conformance_http_error(error)
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/drift/history",
+    response_model=List[ConformanceAssessmentResponse],
+)
+def get_drift_history(
+    architecture_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+) -> List[ConformanceAssessmentResponse]:
+    try:
+        return ConformanceEngine.list_assessments(db, architecture_id, version_id)
+    except ConformanceError as error:
+        _raise_conformance_http_error(error)
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/conformance/compare/{assessment_id}/{other_assessment_id}",
+    response_model=DriftHistoryComparisonResponse,
+)
+def compare_conformance_assessments(
+    architecture_id: UUID,
+    version_id: UUID,
+    assessment_id: UUID,
+    other_assessment_id: UUID,
+    db: Session = Depends(get_db),
+) -> DriftHistoryComparisonResponse:
+    try:
+        return DriftHistoryComparisonResponse(**ConformanceEngine.compare_assessments(db, architecture_id, version_id, assessment_id, other_assessment_id))
+    except ConformanceError as error:
+        _raise_conformance_http_error(error)
+
+
+@router.get(
+    "/architectures/{architecture_id}/versions/{version_id}/conformance/{assessment_id}",
+    response_model=ConformanceAssessmentResponse,
+)
+def get_conformance_assessment(
+    architecture_id: UUID,
+    version_id: UUID,
+    assessment_id: UUID,
+    db: Session = Depends(get_db),
+) -> ConformanceAssessmentResponse:
+    try:
+        return ConformanceEngine.get(db, architecture_id, version_id, assessment_id)
+    except ConformanceError as error:
+        _raise_conformance_http_error(error)
 
 
 # ==================== Compliance Engine Endpoints ====================

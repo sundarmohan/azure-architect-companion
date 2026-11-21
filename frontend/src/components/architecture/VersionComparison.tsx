@@ -1,0 +1,11 @@
+import { X } from 'lucide-react'
+import type { ArchitectureVersion } from '../../models/architecture'
+import type { VersionComparison as Comparison } from '../../models/versioning'
+
+export function VersionComparison({ versions, fromId, toId, result, loading, onFromChange, onToChange, onCompare, onClose }: { versions: ArchitectureVersion[]; fromId: string; toId: string; result: Comparison | null; loading: boolean; onFromChange: (id: string) => void; onToChange: (id: string) => void; onCompare: () => void; onClose: () => void }) {
+  return <div className="modal-backdrop" role="presentation"><section className="comparison-dialog" role="dialog" aria-modal="true" aria-label="Version comparison"><header><div><strong>Version comparison</strong><small>Authoritative backend diff</small></div><button className="icon-button" onClick={onClose} title="Close comparison"><X size={18} /></button></header><div className="comparison-controls"><select value={fromId} onChange={(event) => onFromChange(event.target.value)}>{versions.map((item) => <option key={item.id} value={item.id}>V{item.version_sequence ?? item.version_number}</option>)}</select><span>to</span><select value={toId} onChange={(event) => onToChange(event.target.value)}>{versions.map((item) => <option key={item.id} value={item.id}>V{item.version_sequence ?? item.version_number}</option>)}</select><button className="primary-button" onClick={onCompare} disabled={loading || fromId === toId}>{loading ? 'Comparing...' : 'Compare'}</button></div>{result && <div className="comparison-grid"><ComparisonList title="Added" values={result.summary.resources.added} /><ComparisonList title="Modified" values={result.summary.resources.modified} /><ComparisonList title="Removed" values={result.summary.resources.removed} /><div className="comparison-list"><h3>Connections</h3><p>{result.summary.relationships.added} added · {result.summary.relationships.modified} modified · {result.summary.relationships.removed} removed</p><p>{result.summary.dependencies.added} dependency additions</p></div></div>}</section></div>
+}
+
+function ComparisonList({ title, values }: { title: string; values: string[] }) {
+  return <div className="comparison-list"><h3>{title}</h3>{values.length ? <ul>{values.map((value) => <li key={value}>{value}</li>)}</ul> : <p>None</p>}</div>
+}

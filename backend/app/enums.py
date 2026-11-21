@@ -170,3 +170,169 @@ class TerraformGenerationCode(str, Enum):
     SECRET_CONFIGURATION_REQUIRED = "SECRET_CONFIGURATION_REQUIRED"
     GENERIC_PROPERTY_RENDERING = "GENERIC_PROPERTY_RENDERING"
     GENERATION_FAILURE = "GENERATION_FAILURE"
+
+
+# ==================== TERRAFORM EXECUTION ENUMS ====================
+
+
+class TerraformExecutionState(str, Enum):
+    """States in the controlled Terraform plan/apply lifecycle."""
+
+    PREPARING = "PREPARING"
+    GENERATED = "GENERATED"
+    INITIALIZING = "INITIALIZING"
+    INITIALIZED = "INITIALIZED"
+    VALIDATING = "VALIDATING"
+    VALIDATED = "VALIDATED"
+    PLANNING = "PLANNING"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    APPLYING = "APPLYING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    STALE = "STALE"
+    CANCELLED = "CANCELLED"
+
+
+class TerraformPlanAction(str, Enum):
+    """Normalized Terraform plan action."""
+
+    ADD = "ADD"
+    CHANGE = "CHANGE"
+    DESTROY = "DESTROY"
+    REPLACE = "REPLACE"
+    NO_CHANGE = "NO_CHANGE"
+
+
+class TerraformExecutionEventType(str, Enum):
+    """Auditable M7 lifecycle events."""
+
+    WORKSPACE_PREPARED = "WORKSPACE_PREPARED"
+    PREPARATION_FAILED = "PREPARATION_FAILED"
+    INIT_STARTED = "INIT_STARTED"
+    INIT_COMPLETED = "INIT_COMPLETED"
+    INIT_FAILED = "INIT_FAILED"
+    VALIDATION_STARTED = "VALIDATION_STARTED"
+    VALIDATION_COMPLETED = "VALIDATION_COMPLETED"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    PLAN_STARTED = "PLAN_STARTED"
+    PLAN_COMPLETED = "PLAN_COMPLETED"
+    PLAN_FAILED = "PLAN_FAILED"
+    APPROVAL_GRANTED = "APPROVAL_GRANTED"
+    APPROVAL_REJECTED = "APPROVAL_REJECTED"
+    APPLY_STARTED = "APPLY_STARTED"
+    APPLY_COMPLETED = "APPLY_COMPLETED"
+    APPLY_FAILED = "APPLY_FAILED"
+    APPLY_BLOCKED = "APPLY_BLOCKED"
+    STALE_PLAN_DETECTED = "STALE_PLAN_DETECTED"
+
+
+# ==================== ARCHITECTURE VERSIONING ENUMS ====================
+
+
+class ArchitectureVersionStatus(str, Enum):
+    """Lifecycle states for canonical architecture snapshots."""
+
+    DRAFT = "DRAFT"
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+    ARCHIVED = "ARCHIVED"
+
+
+class ArchitectureVersionEventType(str, Enum):
+    """Append-only architecture version audit event types."""
+
+    VERSION_CREATED = "VERSION_CREATED"
+    VERSION_ACTIVATED = "VERSION_ACTIVATED"
+    VERSION_REVERTED = "VERSION_REVERTED"
+    VERSION_COMPARED = "VERSION_COMPARED"
+    VERSION_CREATION_FAILED = "VERSION_CREATION_FAILED"
+
+
+# ==================== AZURE RESOURCE INTELLIGENCE ENUMS ====================
+
+
+class AzureConnectionStatus(str, Enum):
+    """Normalized status for the configured read-only Azure connection."""
+
+    CONNECTED = "CONNECTED"
+    UNAVAILABLE = "UNAVAILABLE"
+    AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
+    AUTHORIZATION_FAILED = "AUTHORIZATION_FAILED"
+    TIMEOUT = "TIMEOUT"
+    CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
+
+
+class AzureAvailabilityStatus(str, Enum):
+    """Deterministic support result; UNKNOWN must never imply support."""
+
+    SUPPORTED = "SUPPORTED"
+    UNSUPPORTED = "UNSUPPORTED"
+    UNKNOWN = "UNKNOWN"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class AzureProviderRegistrationStatus(str, Enum):
+    REGISTERED = "REGISTERED"
+    NOT_REGISTERED = "NOT_REGISTERED"
+    UNKNOWN = "UNKNOWN"
+
+
+class AzureQuotaStatus(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    INSUFFICIENT = "INSUFFICIENT"
+    UNKNOWN = "UNKNOWN"
+
+
+class AzureFreshnessStatus(str, Enum):
+    FRESH = "FRESH"
+    STALE = "STALE"
+
+
+class AzurePreflightStatus(str, Enum):
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
+# ==================== CONFORMANCE AND DRIFT ENUMS ====================
+
+
+class ConformanceOverallStatus(str, Enum):
+    CONFORMANT = "CONFORMANT"
+    DRIFTED = "DRIFTED"
+    PARTIAL = "PARTIAL"
+    UNKNOWN = "UNKNOWN"
+    ERROR = "ERROR"
+
+
+class ResourceConformanceStatus(str, Enum):
+    CONFORMANT = "CONFORMANT"
+    MODIFIED = "MODIFIED"
+    MISSING = "MISSING"
+    UNEXPECTED = "UNEXPECTED"
+    UNKNOWN = "UNKNOWN"
+
+
+class DriftCategory(str, Enum):
+    CONFIGURATION = "CONFIGURATION_DRIFT"
+    RESOURCE = "RESOURCE_DRIFT"
+    HIERARCHY = "HIERARCHY_DRIFT"
+    RELATIONSHIP = "RELATIONSHIP_DRIFT"
+    DEPENDENCY = "DEPENDENCY_DRIFT"
+    TAG = "TAG_DRIFT"
+    LOCATION = "LOCATION_DRIFT"
+    SKU = "SKU_DRIFT"
+    SECURITY = "SECURITY_DRIFT"
+    NETWORK = "NETWORK_DRIFT"
+    MONITORING = "MONITORING_DRIFT"
+    BACKUP = "BACKUP_DRIFT"
+
+
+class ConformanceEventType(str, Enum):
+    CONFORMANCE_STARTED = "CONFORMANCE_STARTED"
+    CONFORMANCE_COMPLETED = "CONFORMANCE_COMPLETED"
+    CONFORMANCE_FAILED = "CONFORMANCE_FAILED"
+    DRIFT_DETECTED = "DRIFT_DETECTED"
+    DRIFT_RESOLVED = "DRIFT_RESOLVED"

@@ -1,6 +1,7 @@
 """Tests for Milestone 6 deterministic Terraform generation."""
 
 from typing import Optional
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -411,6 +412,21 @@ class TestValidationAndCatalogFailures:
         assert result["status"] == "BLOCKED"
         assert result["errors"][0]["code"] == "REQUIRED_PROPERTY_MISSING"
 
+    def test_unsafe_catalog_file_path_fails(self, db: Session, terraform_catalog):
+        terraform_catalog[STORAGE].terraform_mapping = {
+            "terraform_type": "azurerm_storage_account",
+            "provider": "azurerm",
+            "additional_mapping": {"file_path": "../outside.tf"},
+        }
+        db.commit()
+        architecture, version = create_architecture(db)
+        add_resource(db, version, "storage", STORAGE)
+
+        result = TerraformGenerator.generate(db, architecture.id, version.id)
+
+        assert result["status"] == "BLOCKED"
+        assert result["errors"][0]["code"] == "TERRAFORM_MAPPING_INVALID"
+
 
 class TestSecretsAndDeterminism:
     def test_secret_value_never_appears_in_output(self, db: Session, terraform_catalog):
@@ -448,6 +464,68 @@ class TestSecretsAndDeterminism:
         assert "sensitive = true" in variables
         assert "var.database_api_key" in resource_file
         assert "private-value" not in generated_content(result)
+
+    def test_secret_nested_in_list_never_appears(self, db: Session, terraform_catalog):
+        architecture, version = create_architecture(db)
+        add_resource(
+            db,
+            version,
+            "storage",
+            STORAGE,
+            properties={
+                "connections": [
+                    {"name": "primary", "clientSecret": "nested-private-value"}
+                ]
+            },
+        )
+
+        result = TerraformGenerator.generate(db, architecture.id, version.id)
+
+        assert "nested-private-value" not in str(result)
+        assert "var.storage_connections_0_client_secret" in generated_content(result)
+
+    def test_non_secret_metadata_names_are_not_redacted(self, db: Session, terraform_catalog):
+        architecture, version = create_architecture(db)
+        add_resource(
+            db,
+            version,
+            "metadata",
+            STORAGE,
+            properties={
+                "passwordPolicy": "strict",
+                "tokenEndpoint": "https://example.test/token",
+                "secretName": "application-secret",
+                "certificateStore": "CurrentUser",
+                "connectionStringFormat": "uri",
+            },
+        )
+
+        result = TerraformGenerator.generate(db, architecture.id, version.id)
+
+        assert not any(
+            item["code"] == "SECRET_CONFIGURATION_REQUIRED"
+            for item in result["warnings"]
+        )
+        assert not any(item["path"] == "variables.tf" for item in result["files"])
+
+    def test_unmapped_nested_property_produces_warning(self, db: Session, terraform_catalog):
+        architecture, version = create_architecture(db)
+        add_resource(
+            db,
+            version,
+            "storage",
+            STORAGE,
+            properties={"networkRules": {"defaultAction": "Deny"}},
+        )
+
+        result = TerraformGenerator.generate(db, architecture.id, version.id)
+
+        assert result["status"] == "GENERATED"
+        assert any(
+            item["code"] == "GENERIC_PROPERTY_RENDERING"
+            and item["details"]["property"] == "networkRules"
+            for item in result["warnings"]
+        )
 
     def test_same_version_generates_identical_output(self, db: Session, terraform_catalog):
         architecture, version = create_architecture(db)
@@ -531,6 +609,22 @@ class TestChangeDetection:
         assert "resource_group.tf" in result["unchanged_files"]
         assert result["affected_files"] == []
 
+    def test_relationship_change_affects_referencing_resource_file(self, db: Session, terraform_catalog):
+        architecture, version_one = create_architecture(db)
+        add_resource(db, version_one, "subnet", SUBNET)
+        add_resource(db, version_one, "nic", NIC)
+        version_two = create_version(db, architecture, "2.0")
+        subnet = add_resource(db, version_two, "subnet", SUBNET)
+        nic = add_resource(db, version_two, "nic", NIC)
+        relate(db, version_two, nic, subnet)
+
+        result = TerraformGenerator.compare_versions(
+            db, architecture.id, version_one.id, version_two.id
+        )
+
+        assert "nic" in result["modified_resources"]
+        assert "networking/network_interface.tf" in result["affected_files"]
+
 
 class TestTerraformAPI:
     def test_generate_endpoint(self, client, db: Session, terraform_catalog):
@@ -545,3 +639,50 @@ class TestTerraformAPI:
         assert response.status_code == 200
         assert response.json()["status"] == "GENERATED"
         assert any(item["path"] == "resource_group.tf" for item in response.json()["files"])
+
+    def test_get_generated_terraform_endpoint(self, client, db: Session, terraform_catalog):
+        architecture, version = create_architecture(db)
+        add_resource(db, version, "rg", RG)
+
+        response = client.get(
+            f"/architectures/{architecture.id}/versions/{version.id}/terraform"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "GENERATED"
+
+    def test_change_analysis_endpoint(self, client, db: Session, terraform_catalog):
+        architecture, version_one = create_architecture(db)
+        add_resource(db, version_one, "rg", RG)
+        version_two = create_version(db, architecture, "2.0")
+        add_resource(db, version_two, "rg", RG)
+        add_resource(db, version_two, "storage", STORAGE)
+
+        response = client.get(
+            f"/architectures/{architecture.id}/versions/{version_one.id}"
+            f"/terraform/changes/{version_two.id}"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["added_resources"] == ["storage"]
+
+    def test_generate_missing_architecture_returns_404(self, client):
+        response = client.post(
+            f"/architectures/{uuid4()}/versions/{uuid4()}/terraform/generate",
+            json={},
+        )
+
+        assert response.status_code == 404
+
+    def test_validation_block_returns_structured_200(self, client, db: Session, terraform_catalog):
+        architecture, version = create_architecture(db)
+        add_resource(db, version, "unknown", "unknown/provider")
+
+        response = client.post(
+            f"/architectures/{architecture.id}/versions/{version.id}/terraform/generate",
+            json={},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "BLOCKED"
+        assert response.json()["files"] == []

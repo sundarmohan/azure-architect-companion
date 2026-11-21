@@ -2,16 +2,18 @@
 
 import json
 import re
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from ..enums import TerraformGenerationCode, TerraformGenerationStatus
+from ..enums import AzurePreflightStatus, TerraformGenerationCode, TerraformGenerationStatus
 from ..models import (
     Architecture,
     ArchitectureVersion,
+    AzurePreflightResult,
     Dependency,
     Relationship,
     Resource,
@@ -32,11 +34,17 @@ class TerraformGenerator:
             "api_key",
             "apikey",
             "client_secret",
+            "client_secret_value",
             "connection_string",
             "password",
+            "password_value",
+            "primary_key",
             "private_key",
+            "secondary_key",
             "secret",
+            "secret_value",
             "token",
+            "token_value",
         }
     )
     _SECRET_SUFFIXES = (
@@ -60,11 +68,26 @@ class TerraformGenerator:
         architecture_id: UUID,
         version_id: UUID,
         compare_to_version_id: Optional[UUID] = None,
+        intelligence_mode: str = "STATIC_ONLY",
+        azure_preflight_id: Optional[UUID] = None,
     ) -> dict:
         """Generate deterministic Terraform for one architecture version."""
         architecture, version = cls._load_architecture_version(
             db, architecture_id, version_id
         )
+        if intelligence_mode not in {"STATIC_ONLY", "AZURE_VALIDATED"}:
+            raise ValueError("Unsupported Terraform intelligence mode")
+        preflight = None
+        if intelligence_mode == "AZURE_VALIDATED":
+            preflight = (
+                db.query(AzurePreflightResult)
+                .filter(
+                    AzurePreflightResult.id == azure_preflight_id,
+                    AzurePreflightResult.architecture_id == architecture_id,
+                    AzurePreflightResult.architecture_version_id == version_id,
+                )
+                .first()
+            )
         validation = ValidationEngine.validate_version(
             db, architecture_id, version_id
         )
@@ -116,6 +139,39 @@ class TerraformGenerator:
                 ]
                 + validation_errors,
                 unsupported,
+                intelligence_mode,
+                preflight,
+            )
+
+        if preflight:
+            from .architecture_versioning import ArchitectureVersioningService
+            current_architecture_hash = ArchitectureVersioningService.snapshot_hash(db, architecture_id, version_id)
+        else:
+            current_architecture_hash = None
+        expires_at = preflight.snapshot.expires_at if preflight else None
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        preflight_stale = bool(preflight and (
+            expires_at is None
+            or expires_at <= datetime.now(timezone.utc)
+            or preflight.architecture_snapshot_hash != current_architecture_hash
+        ))
+        if intelligence_mode == "AZURE_VALIDATED" and (
+            preflight is None or preflight.status != AzurePreflightStatus.PASSED.value or preflight_stale
+        ):
+            code = "AZURE_PREFLIGHT_REQUIRED" if preflight is None else "AZURE_PREFLIGHT_STALE" if preflight_stale else "AZURE_PREFLIGHT_FAILED"
+            return cls._blocked_result(
+                architecture_id,
+                version_id,
+                validation,
+                [cls._finding(
+                    code,
+                    "ERROR",
+                    "A successful Azure preflight for this architecture version is required",
+                    details={"azure_preflight_id": str(azure_preflight_id) if azure_preflight_id else None},
+                )],
+                intelligence_mode=intelligence_mode,
+                preflight=preflight,
             )
 
         resources = (
@@ -208,6 +264,8 @@ class TerraformGenerator:
                 validation,
                 errors,
                 unsupported,
+                intelligence_mode,
+                preflight,
             )
 
         labels = cls._build_labels(resources)
@@ -247,6 +305,9 @@ class TerraformGenerator:
             "resources_processed": len(resources),
             "resources_unsupported": [],
             "changed_files": changed_files,
+            "intelligence_mode": intelligence_mode,
+            "azure_snapshot_id": preflight.azure_snapshot_id if preflight else None,
+            "azure_preflight_id": preflight.id if preflight else None,
         }
 
     @classmethod
@@ -472,6 +533,16 @@ class TerraformGenerator:
         path: Tuple[str, ...],
         variables: Dict[Tuple[UUID, Tuple[str, ...]], str],
     ) -> None:
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                cls._walk_secret_values(
+                    resource_id,
+                    item,
+                    label,
+                    path + (str(index),),
+                    variables,
+                )
+            return
         if not isinstance(value, dict):
             return
         for key in sorted(value):
@@ -1134,6 +1205,8 @@ class TerraformGenerator:
         validation: dict,
         errors: List[dict],
         unsupported: Optional[List[UUID]] = None,
+        intelligence_mode: str = "STATIC_ONLY",
+        preflight: Optional[AzurePreflightResult] = None,
     ) -> dict:
         return {
             "architecture_id": architecture_id,
@@ -1148,4 +1221,7 @@ class TerraformGenerator:
             "resources_processed": 0,
             "resources_unsupported": unsupported or [],
             "changed_files": [],
+            "intelligence_mode": intelligence_mode,
+            "azure_snapshot_id": preflight.azure_snapshot_id if preflight else None,
+            "azure_preflight_id": preflight.id if preflight else None,
         }
