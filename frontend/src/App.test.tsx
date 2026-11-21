@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -43,7 +43,7 @@ describe('App integration', () => {
   it('version selector exposes backend versions', async () => {
     render(<App />)
     await screen.findByText('Production platform')
-    expect(screen.getByText('V1 · ACTIVE')).toBeInTheDocument()
+    expect(await screen.findByText('V1 · ACTIVE')).toBeInTheDocument()
     expect(screen.getByText('V2 · DRAFT')).toBeInTheDocument()
   })
 
@@ -65,7 +65,7 @@ describe('App integration', () => {
     await screen.findByText('Production platform')
     await userEvent.click(await screen.findByText('Connect test nodes'))
     await userEvent.type(screen.getByLabelText('Relationship type'), 'routes_to')
-    await userEvent.click(screen.getByText('Create relationship'))
+    await userEvent.click(screen.getByRole('button', { name: 'Create relationship' }))
     await waitFor(() => expect(mocked.createRelationship).toHaveBeenCalledWith('a1', 'v2', 'r1', 'r2', 'routes_to'))
   })
 
@@ -79,8 +79,9 @@ describe('App integration', () => {
     mocked.listArchitectures.mockRejectedValue(new ApiError(409, { code: 'VERSION_STALE', message: 'Version changed' }))
     render(<App />)
     expect(await screen.findByText('Version changed')).toBeInTheDocument()
-    expect(screen.getByText('Reload latest')).toBeInTheDocument()
-    expect(screen.getByText('Compare')).toBeInTheDocument()
+    const alert = screen.getByRole('alert')
+    expect(within(alert).getByText('Reload latest')).toBeInTheDocument()
+    expect(within(alert).getByText('Compare')).toBeInTheDocument()
   })
 
   it('runs Azure preflight through the backend API', async () => {

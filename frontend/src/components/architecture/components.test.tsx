@@ -38,7 +38,7 @@ describe('architecture components', () => {
   })
   it('opens selected resource properties', () => {
     render(<PropertiesPanel resource={vm} catalog={computeCatalog} readOnly={false} relationshipCount={1} onSave={vi.fn()} onDelete={vi.fn()} onClose={vi.fn()} />)
-    expect(screen.getByDisplayValue('web-vm')).toBeInTheDocument()
+    expect(screen.getByLabelText('Resource name')).toHaveValue('web-vm')
   })
   it('renders schema fields without secret properties', () => {
     render(<PropertiesPanel resource={vm} catalog={computeCatalog} readOnly={false} relationshipCount={0} onSave={vi.fn()} onDelete={vi.fn()} onClose={vi.fn()} />)
@@ -58,7 +58,7 @@ describe('architecture components', () => {
     render(<PropertiesPanel resource={vm} catalog={computeCatalog} readOnly={false} relationshipCount={0} onSave={vi.fn().mockRejectedValue(new Error('Save rejected'))} onDelete={vi.fn()} onClose={vi.fn()} />)
     await userEvent.click(screen.getByText('Apply changes'))
     expect(await screen.findByText('Save rejected')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('web-vm')).toBeInTheDocument()
+    expect(screen.getByLabelText('Resource name')).toHaveValue('web-vm')
   })
   it('renders explicit save states', () => {
     const { rerender } = render(<SaveStatus state="saving" />)
