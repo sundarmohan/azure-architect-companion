@@ -59,7 +59,7 @@ describe('App integration', () => {
   })
 
   it('creates an explicitly typed relationship through the dialog', async () => {
-    mocked.createRelationship.mockResolvedValue({ id: 'rel2', architecture_version_id: 'v2', source_resource_id: 'r1', target_resource_id: 'r2', relationship_type: 'routes_to', properties: {}, created_at: '' })
+    mocked.createRelationship.mockResolvedValue({ id: 'rel2', architecture_version_id: 'v2', source_resource_id: 'r1', target_resource_id: 'r2', relationship_type: 'routes_to', metadata: null })
     mocked.validate.mockResolvedValue({ architecture_id: 'a1', architecture_version_id: 'v2', status: 'VALID', error_count: 0, warning_count: 0, info_count: 0, total_findings: 0, findings: [] })
     render(<App />)
     await screen.findByText('Production platform')
