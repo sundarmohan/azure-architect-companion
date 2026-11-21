@@ -1,7 +1,7 @@
+import asyncio
 import json
 
 import httpx
-import pytest
 
 from app.domains.monitoring.security_collector import collect_security
 
@@ -14,8 +14,7 @@ OTHER_RESOURCE = RESOURCE.replace(SUBSCRIPTION, "20ff7fc3-e762-44dd-bd96-b71116d
 SENSITIVE = "arbitrary text from Azure that must be dropped"
 
 
-@pytest.mark.asyncio
-async def test_collector_keeps_scoped_allowlisted_signals():
+def test_collector_keeps_scoped_allowlisted_signals():
     def handle(request):
         assert request.method == "GET"
         assert request.url.host == "management.azure.com"
@@ -50,10 +49,13 @@ async def test_collector_keeps_scoped_allowlisted_signals():
             "operationName": {"value": "Microsoft.Authorization/roleAssignments/write"},
         }]})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        status, findings, _ = await collect_security(SUBSCRIPTION, [{"id": RESOURCE}], http, {
-            "Authorization": "Bearer fixture-token",
-        })
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+            return await collect_security(SUBSCRIPTION, [{"id": RESOURCE}], http, {
+                "Authorization": "Bearer fixture-token",
+            })
+
+    status, findings, _ = asyncio.run(run())
     assert status == "synced"
     assert [row["severity"] for row in findings] == ["high", "medium", "informational"]
     assert {row["resource_id"] for row in findings} == {RESOURCE}
@@ -62,8 +64,7 @@ async def test_collector_keeps_scoped_allowlisted_signals():
     assert SENSITIVE not in json.dumps(findings)
 
 
-@pytest.mark.asyncio
-async def test_collector_follows_only_same_scope_and_reports_partial_feeds():
+def test_collector_follows_only_same_scope_and_reports_partial_feeds():
     paths = []
 
     def handle(request):
@@ -80,8 +81,11 @@ async def test_collector_follows_only_same_scope_and_reports_partial_feeds():
             })
         return httpx.Response(403)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        status, findings, limitations = await collect_security(SUBSCRIPTION, [], http, {})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+            return await collect_security(SUBSCRIPTION, [], http, {})
+
+    status, findings, limitations = asyncio.run(run())
     assert status == "partial_failure"
     assert not findings
     assert len(paths) == 4
