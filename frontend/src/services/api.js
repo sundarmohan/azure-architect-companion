@@ -146,6 +146,12 @@ export const listAzureResourceConfigurations=()=>request("/azure/resource-config
 const subscriptionQuery=id=>id?`?subscription_id=${encodeURIComponent(id)}`:"";
 export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQuery(id)}`);
 export const refreshAzureInventory=id=>request(`/azure/inventory/refresh${subscriptionQuery(id)}`,{method:"POST"});
+export const getAzureMonitoring=id=>fetchRequest(`/azure/monitoring${subscriptionQuery(id)}`);
+export const refreshAzureMonitoring=id=>request(`/azure/monitoring/refresh${subscriptionQuery(id)}`,{method:"POST"});
+export const getAzureMonitoringSchedule=id=>fetchRequest(`/azure/monitoring/schedule${subscriptionQuery(id)}`);
+export const updateAzureMonitoringSchedule=(id,data)=>request(`/azure/monitoring/schedule${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
+export const getAzureNetwork=id=>fetchRequest(`/azure/network${subscriptionQuery(id)}`);
+export const refreshAzureNetwork=id=>request(`/azure/network/refresh${subscriptionQuery(id)}`,{method:"POST"});
 export const discoverAzureResources=(id,data)=>request(`/architectures/${id}/discover-resources`,{method:"POST",body:JSON.stringify(data)});
 export const getResourceMonitoring=(aid,rid,data={})=>request(`/architectures/${aid}/resources/${rid}/monitoring`,{method:"POST",body:JSON.stringify(data)});
 export const getArchitectureMonitoringSummary=(aid,data={})=>request(`/architectures/${aid}/monitoring-summary`,{method:"POST",body:JSON.stringify(data)});

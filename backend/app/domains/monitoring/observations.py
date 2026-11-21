@@ -86,10 +86,16 @@ async def collect_observations(context: CollectionContext, kinds: tuple[Observat
 
 
 async def refresh_observations(db: AsyncSession, client_id: UUID, subscription_id: UUID | None,
-                               kinds: tuple[ObservationKind, ...], request: Request | None = None):
+                               kinds: tuple[ObservationKind, ...], request: Request | None = None,
+                               *, schedule_generation: UUID | None = None):
     context = await observation_context(db, client_id, subscription_id)
     if context is None:
         return {}
+    key = (client_id, context.subscription_id)
+    if request is None:
+        schedule = await db.get(AzureObservationSchedule, key)
+        if schedule is None or not schedule.enabled or schedule.generation != schedule_generation:
+            return {}
     await db.rollback()
     started = datetime.now(timezone.utc)
     results = await collect_observations(context, kinds)
@@ -100,8 +106,9 @@ async def refresh_observations(db: AsyncSession, client_id: UUID, subscription_i
         ciphertext = await db.scalar(select(AzureConnection.ciphertext).where(
             AzureConnection.client_id == client_id
         ).with_for_update())
-        schedule = await db.get(AzureObservationSchedule, (client_id, context.subscription_id))
-        if ciphertext != context.ciphertext or schedule is None or not schedule.enabled:
+        schedule = await db.get(AzureObservationSchedule, key)
+        if (ciphertext != context.ciphertext or schedule is None or not schedule.enabled
+                or schedule.generation != schedule_generation):
             return {}
         actor_id = None
     snapshots = {}

@@ -1,5 +1,5 @@
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -26,6 +26,7 @@ class AzureObservationSchedule(Base):
 
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
     subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
+    generation: Mapped[UUID] = mapped_column(default=uuid4)
     enabled: Mapped[bool]
     interval_minutes: Mapped[int]
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)

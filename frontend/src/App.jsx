@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ArchitectureWorkspace from "./workspaces/ArchitectureWorkspace";
 import AzureConnectionWorkspace from "./workspaces/AzureConnectionWorkspace";
 import AzureInventoryWorkspace from "./workspaces/AzureInventoryWorkspace";
+import AzureMonitoringWorkspace from "./workspaces/AzureMonitoringWorkspace";
+import AzureNetworkWorkspace from "./workspaces/AzureNetworkWorkspace";
 import { AccountWorkspace, SignInForm } from "./workspaces/AccountWorkspace";
 import { getCurrentUser, logout, onUnauthorized, setApiSession } from "./services/api";
 import "./styles/app.css";
 import "./styles/platform.css";
 import "./styles/account.css";
+import "./styles/observability.css";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -92,6 +95,8 @@ export default function App() {
           {activeClient && <>
             <button className={`nav-item ${workspace === "architecture" ? "active" : ""}`} onClick={() => setWorkspace("architecture")}>Architecture Studio</button>
             <button className={`nav-item ${workspace === "inventory" ? "active" : ""}`} onClick={() => setWorkspace("inventory")}>Azure Inventory</button>
+            <button className={`nav-item ${workspace === "monitoring" ? "active" : ""}`} onClick={() => setWorkspace("monitoring")}>Monitoring</button>
+            <button className={`nav-item ${workspace === "network" ? "active" : ""}`} onClick={() => setWorkspace("network")}>Network</button>
             <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
           </>}
           <button className={`nav-item ${workspace === "account" ? "active" : ""}`} onClick={() => setWorkspace("account")}>Account</button>
@@ -118,6 +123,10 @@ export default function App() {
           <AzureConnectionWorkspace canManage={activeClient.role === "admin"} />
         ) : workspace === "inventory" ? (
           <AzureInventoryWorkspace canRefresh={canEdit} />
+        ) : workspace === "monitoring" ? (
+          <AzureMonitoringWorkspace canRefresh={canEdit} canManageSchedule={activeClient.role === "admin"} />
+        ) : workspace === "network" ? (
+          <AzureNetworkWorkspace canRefresh={canEdit} />
         ) : (
           <ArchitectureWorkspace canEdit={canEdit} canApprove={activeClient.role === "admin"} />
         )}

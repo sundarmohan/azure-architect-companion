@@ -96,22 +96,9 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
-      - name: Verify Phase 1 and designer frontend tests
+      - name: Run frontend tests
         working-directory: frontend
-        run: >-
-          npm test --
-          --exclude src/workspaces/MonitoringWorkspace.ui2b.test.jsx
-          --exclude src/workspaces/MonitoringWorkspace.ui2c.unused.test.jsx
-
-      # These suites target the historical monitoring interface. Keep their
-      # results visible and restore them to required checks in the monitoring phase.
-      - name: Run deferred legacy monitoring suites
-        continue-on-error: true
-        working-directory: frontend
-        run: >-
-          npm test --
-          src/workspaces/MonitoringWorkspace.ui2b.test.jsx
-          src/workspaces/MonitoringWorkspace.ui2c.unused.test.jsx
+        run: npm test
 
       - name: Production build
         working-directory: frontend

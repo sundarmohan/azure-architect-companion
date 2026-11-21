@@ -41,14 +41,34 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
   [GitHub Actions verified the Phase 2 code at `8854402`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44927878566).
   Azure inventory tests use mocked Azure responses. Live Azure access and
   applying exported artifacts are outside this verification.
+- [ ] Phase 3: scoped Azure monitoring, network intelligence, and opt-in polling.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
-The Azure connection test uses a mocked provider response in CI. Required
-checks cover a fresh PostgreSQL migration, backend tests, active frontend
-tests, and the production frontend build. Two historical monitoring suites
-run separately and are currently non-blocking. Reconcile their expectations
-and restore them to required checks when the monitoring UI is re-enabled.
-The background monitoring worker remains disabled until the monitoring phase.
+GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
+and the production frontend build. Azure integration tests use mocked provider
+responses.
+
+## Phase 3 Azure monitoring and network intelligence
+
+Refresh Azure Inventory for the subscription before collecting observations.
+Editors and administrators can refresh either workspace. Client administrators
+can opt in to polling from Infrastructure Monitoring. The schedule collects
+both telemetry and network snapshots for the selected subscription, at
+intervals from five minutes to 24 hours.
+
+Infrastructure Monitoring shows Azure Resource Health and supported Azure
+Monitor hourly metric points from the previous 24 hours. A refresh samples up
+to 40 inventoried resources. Network Intelligence displays configured links
+and evidence such as network and DNS relationships, route tables, network
+security groups, firewall configuration and attached public IPs. Traffic
+information comes from supported Azure Monitor aggregate counters. Effective
+reachability, packet capture and flow-level attribution are outside this
+release.
+
+Observations show when the latest attempt and successful collection occurred.
+The UI identifies deliberately retained earlier data after a failed collection.
+Client credentials and subscriptions determine collection scope. All provider
+calls are read-only.
 
 ## Phase 2 Azure and design workflows
 

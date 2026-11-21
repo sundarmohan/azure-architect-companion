@@ -1,10 +1,10 @@
 import asyncio
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
 from app.domains.access import inventory
 from app.domains.monitoring import observations
 from app.domains.monitoring.observation_worker import claim_due_schedule
@@ -87,7 +87,12 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
     async def verify_claim():
         try:
             claim = await claim_due_schedule()
-            assert tuple(map(str, claim)) == (first, primary)
+            assert tuple(map(str, claim[:2])) == (first, primary)
+            assert isinstance(claim[2], UUID)
+            async with SessionLocal() as db:
+                assert await observations.refresh_observations(
+                    db, UUID(first), UUID(primary), observations.KINDS, schedule_generation=uuid4(),
+                ) == {}
             assert await claim_due_schedule() is None
         finally:
             await engine.dispose()

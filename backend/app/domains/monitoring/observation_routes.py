@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -82,7 +82,7 @@ async def write_schedule(payload: ScheduleWrite, request: Request, subscription_
     if selected is None:
         raise HTTPException(409, "Configure an Azure subscription before scheduling collection")
     next_run = datetime.now(timezone.utc) if payload.enabled else None
-    values = {**payload.model_dump(), "next_run_at": next_run}
+    values = {**payload.model_dump(), "next_run_at": next_run, "generation": uuid4()}
     await db.execute(insert(AzureObservationSchedule).values(client_id=client_id, subscription_id=UUID(selected), **values)
         .on_conflict_do_update(index_elements=[AzureObservationSchedule.client_id, AzureObservationSchedule.subscription_id],
                                set_=values))

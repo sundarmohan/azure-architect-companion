@@ -1,0 +1,77 @@
+.azure-observability .workspace-header h1,
+.azure-observability h3 {
+  margin: 0;
+}
+
+.azure-observability .observability-checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.metric-series,
+.network-properties {
+  padding: 12px 14px;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+}
+
+.metric-series summary,
+.network-properties summary {
+  cursor: pointer;
+}
+
+.metric-series summary span {
+  margin-left: 12px;
+  color: #47566d;
+}
+
+.monitoring-trend {
+  display: block;
+  width: 100%;
+  height: 90px;
+  margin: 6px 0;
+  background: #f4f8fe;
+  border-radius: 8px;
+}
+
+.monitoring-trend polyline {
+  fill: none;
+  stroke: #0878ca;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.network-properties dl div {
+  padding: 8px 0;
+  border-bottom: 1px solid #dbe3ee;
+}
+
+.network-properties dt {
+  font-weight: 600;
+}
+
+.network-properties dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.network-properties pre {
+  max-height: 24rem;
+  margin: 0;
+  overflow: auto;
+}
+
+.observability-topology {
+  height: min(55dvh, 440px);
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+}
+
+.observability-topology .observability-selected-node {
+  color: #063b68;
+  background: #e5f3fe;
+  border-color: #0878ca;
+  font-weight: 600;
+}
