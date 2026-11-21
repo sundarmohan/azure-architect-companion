@@ -308,7 +308,7 @@ export function buildCanvasNodes(resourceList, groups, catalogLookup) {
   return [...groupNodes, ...positioned];
 }
 
-export default function Designer({ architecture, onBack, phaseOne = false, canEdit = true }) {
+export default function Designer({ architecture, onBack, scopedAzure = false, canEdit = true, canEstimate = canEdit }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -558,7 +558,7 @@ export default function Designer({ architecture, onBack, phaseOne = false, canEd
         listRelationships(architecture.id),
         listResourceGroups(architecture.id),
         listSubscriptions(architecture.id),
-        phaseOne ? getAzureConnectionStatus() : getSettingsOverview(),
+        scopedAzure ? getAzureConnectionStatus() : getSettingsOverview(),
       ]);
 
       if (loadId !== latestLoadRef.current) {
@@ -571,7 +571,7 @@ export default function Designer({ architecture, onBack, phaseOne = false, canEd
       setResources(resourceList);
       setResourceGroups(groups);
       setSubscriptions(subs);
-      setAzureIntegration((phaseOne ? settings : settings?.azure_integration) || null);
+      setAzureIntegration((scopedAzure ? settings : settings?.azure_integration) || null);
 
       setDiscoverySubscriptionId((current) => {
         if (!subs.length) {
@@ -601,7 +601,7 @@ export default function Designer({ architecture, onBack, phaseOne = false, canEd
         setError(e.message);
       }
     }
-  }, [architecture.id, edgeFromRelationship, phaseOne, setEdges, setNodes]);
+  }, [architecture.id, edgeFromRelationship, scopedAzure, setEdges, setNodes]);
 
   useEffect(() => {
     load();
@@ -1262,7 +1262,7 @@ export default function Designer({ architecture, onBack, phaseOne = false, canEd
     <div className="studio">
       <aside className="palette">
         <div className="studio-head">
-          <button className="back-button" onClick={onBack}>← All architectures</button>
+          <button className="back-button" onClick={onBack}>← Design details</button>
           <h2>Azure Resources</h2>
           {canEdit && <p>Drag a service onto the canvas to design your topology.</p>}
         </div>
@@ -1291,7 +1291,7 @@ export default function Designer({ architecture, onBack, phaseOne = false, canEd
                 <small>{item.subscription_id || "No Azure subscription ID mapped"}</small>
               </div>
             ))}
-            {!phaseOne && canEdit && <div className="discovery-controls">
+            {!scopedAzure && canEdit && <div className="discovery-controls">
               <select
                 value={discoverySubscriptionId}
                 onChange={(event) => setDiscoverySubscriptionId(event.target.value)}
@@ -1518,7 +1518,7 @@ export default function Designer({ architecture, onBack, phaseOne = false, canEd
               <button className="inspector-close" onClick={() => setSelectedNode(null)} aria-label="Close inspector">×</button>
             </div>
             <div className="inspector-tabs">
-              {[["properties", "Properties"], ["details", "Dependencies"], ...(!phaseOne ? [["cost", "Cost"]] : [])].map(([value, label]) => (
+              {[["properties", "Properties"], ["details", "Dependencies"], ...(canEstimate ? [["cost", "Cost"]] : [])].map(([value, label]) => (
                 <button key={value} className={inspectorTab === value ? "active" : ""} onClick={() => setInspectorTab(value)}>{label}</button>
               ))}
             </div>

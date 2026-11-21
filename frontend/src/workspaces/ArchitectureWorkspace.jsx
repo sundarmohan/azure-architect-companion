@@ -4,107 +4,109 @@ import {
   createArchitecture,
   updateArchitecture,
   deleteArchitecture,
-  listAzureSubscriptionInventory,
+  duplicateArchitecture,
 } from "../services/api";
 import Designer from "../Designer";
+import DesignDetails, { designStatus } from "./DesignDetails";
+import "../styles/design.css";
 
-function ArchitectureFormModal({ title, initialValue, onSubmit, onClose, isSubmitting = false }) {
-  const [name, setName] = useState(initialValue || "");
+function ArchitectureFormModal({ title, design, duplicate, onSubmit, onClose, isSubmitting = false, error }) {
+  async function submit(event) {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    const name = values.name.trim();
+    if (!name || isSubmitting) return;
+    await onSubmit(duplicate ? { name } : {
+      name,
+      project: values.project.trim() || null,
+      environment: values.environment.trim() || "draft",
+      default_region: values.default_region.trim() || null,
+      description: values.description.trim() || null,
+    });
+  }
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
-        <label htmlFor="architecture-name">Architecture name</label>
-        <input
-          id="architecture-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Enter architecture name"
-        />
+    <div className="modal-backdrop">
+      <form className="modal-card account-form" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}>
+        <h2>{title}</h2>
+        <fieldset disabled={isSubmitting}>
+          <label>Architecture name<input name="name" autoFocus defaultValue={duplicate ? `${design.name} copy`.slice(0, 200) : design?.name} maxLength={200} required /></label>
+          {!duplicate && <>
+            <label>Project<input name="project" defaultValue={design?.project || ""} maxLength={160} /></label>
+            <label>Environment<input name="environment" defaultValue={design?.environment || ""} maxLength={50} /></label>
+            <label>Default Azure region<input name="default_region" defaultValue={design?.default_region || ""} placeholder="eastus" /></label>
+            <label>Description<textarea name="description" defaultValue={design?.description || ""} rows={3} /></label>
+          </>}
+        </fieldset>
+        {error && <div className="error" role="alert">{error}</div>}
         <div className="actions">
-          <button className="dismiss" onClick={onClose}>Cancel</button>
-          <button
-            disabled={isSubmitting}
-            onClick={async () => {
-              if (isSubmitting) return;
-              const trimmed = name.trim();
-              if (!trimmed) return;
-              await onSubmit(trimmed);
-            }}
-          >
-            {isSubmitting ? "Saving..." : "Save"}
-          </button>
+          <button type="button" className="dismiss" disabled={isSubmitting} onClick={onClose}>Cancel</button>
+          <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
 
-export default function ArchitectureWorkspace({ phaseOne = false, canEdit = true }) {
+export default function ArchitectureWorkspace({ canEdit, canApprove }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [inventoryLoading, setInventoryLoading] = useState(true);
   const [error, setError] = useState("");
   const [active, setActive] = useState(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [renameTarget, setRenameTarget] = useState(null);
-  const [createSubmitting, setCreateSubmitting] = useState(false);
-  const [renameSubmitting, setRenameSubmitting] = useState(false);
-  const [subscriptionInventory, setSubscriptionInventory] = useState([]);
+  const [showDesigner, setShowDesigner] = useState(false);
+  const [form, setForm] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [filter, setFilter] = useState("");
 
   async function load() {
     setLoading(true);
-    setInventoryLoading(true);
     setError("");
-    await Promise.all([
-      listArchitectures()
-        .then(setItems)
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false)),
-      !phaseOne && listAzureSubscriptionInventory()
-        .then(setSubscriptionInventory)
-        .catch((e) => setError(e.message))
-        .finally(() => setInventoryLoading(false)),
-    ]);
-  }
-
-  async function create(name) {
-    if (createSubmitting) return;
-    setCreateSubmitting(true);
     try {
-      const a = await createArchitecture({ name });
-      setCreateOpen(false);
-      setActive(a);
-      void load();
-    } catch (e) {
-      setError(e.message);
+      setItems(await listArchitectures());
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
     } finally {
-      setCreateSubmitting(false);
+      setLoading(false);
     }
   }
 
-  async function rename(name) {
-    if (!renameTarget) return;
-    if (renameSubmitting) return;
-    setRenameSubmitting(true);
+  function openForm(mode, design) {
+    setForm({ mode, design });
+    setFormError("");
+  }
+
+  function openDesign(design, canvas = false) {
+    setActive(design);
+    setShowDesigner(canvas);
+  }
+
+  async function save(values) {
+    setSubmitting(true);
+    setFormError("");
     try {
-      await updateArchitecture(renameTarget.id, { name });
-      setRenameTarget(null);
+      let design;
+      if (form.mode === "edit") design = await updateArchitecture(form.design.id, values);
+      else if (form.mode === "duplicate") design = await duplicateArchitecture(form.design.id, values);
+      else design = await createArchitecture(values);
+      openDesign(design);
+      setForm(null);
       await load();
-    } catch (e) {
-      setError(e.message);
+    } catch (failure) {
+      if (failure.name !== "AbortError") setFormError(failure.message);
     } finally {
-      setRenameSubmitting(false);
+      setSubmitting(false);
     }
   }
 
-  async function remove(a) {
-    if (!window.confirm(`Delete "${a.name}"?`)) return;
+  async function remove(design) {
+    if (!window.confirm(`Delete "${design.name}" permanently?`)) return;
     try {
-      await deleteArchitecture(a.id);
+      await deleteArchitecture(design.id);
+      setActive(null);
       await load();
-    } catch (e) {
-      setError(e.message);
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
     }
   }
 
@@ -112,22 +114,28 @@ export default function ArchitectureWorkspace({ phaseOne = false, canEdit = true
     load();
   }, []);
 
-  if (active) {
+  if (active && showDesigner) {
     return (
       <section className="workspace-panel">
         <div className="workspace-header">
           <div>
             <div className="workspace-eyebrow">Architecture</div>
             <h1>Architecture Studio</h1>
-            <p>{phaseOne ? "View or design client architecture layouts." : "Design, organize and persist architecture layouts with hierarchy and discovery."}</p>
+            <p>View the topology and edit draft designs.</p>
           </div>
         </div>
         <div className="designer-host">
-          <Designer architecture={active} phaseOne={phaseOne} canEdit={canEdit} onBack={() => { setActive(null); load(); }} />
+          <Designer architecture={active} scopedAzure canEdit={canEdit && active.status === "draft"}
+            canEstimate={canEdit} onBack={() => setShowDesigner(false)} />
         </div>
       </section>
     );
   }
+
+  const query = filter.trim().toLowerCase();
+  const matches = items.filter((item) => [item.name, item.project, item.environment, designStatus(item.status)]
+    .some((value) => value?.toLowerCase().includes(query)));
+  const formTitle = { create: "New architecture", edit: "Edit design details", duplicate: "Duplicate design" };
 
   return (
     <section className="workspace-panel">
@@ -135,100 +143,53 @@ export default function ArchitectureWorkspace({ phaseOne = false, canEdit = true
         <div>
           <div className="workspace-eyebrow">Architecture</div>
           <h1>Architecture Studio</h1>
-          <p>Manage architecture workspaces, then open a design for canvas editing and Azure hierarchy operations.</p>
+          <p>Design Azure topology, review changes, and export architecture artifacts.</p>
         </div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
 
-      <section className="card">
-        <div className="card-title"><h2>Architecture Designs</h2><div className="actions"><span>{items.length}</span>{canEdit && <button onClick={() => setCreateOpen(true)}>+ New Architecture</button>}</div></div>
+      {active ? <DesignDetails key={active.id} design={active} canEdit={canEdit} canApprove={canApprove}
+        onBack={() => { setActive(null); void load(); }}
+        onOpenDesigner={() => setShowDesigner(true)}
+        onEdit={() => openForm("edit", active)}
+        onDuplicate={() => openForm("duplicate", active)}
+        onDelete={() => remove(active)}
+        onUpdate={setActive} /> : <section className="card">
+        <div className="card-title"><h2>Architecture Designs</h2><div className="actions"><span>{items.length}</span>{canEdit && <button onClick={() => openForm("create")}>New architecture</button>}</div></div>
+        {items.length > 0 && <label className="design-control">Filter designs<input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Name, project, environment, or status" /></label>}
         {loading && items.length === 0 ? (
-          <p>Loading...</p>
+          <p role="status">Loading…</p>
         ) : items.length === 0 ? (
           <div className="empty">{canEdit ? "No architectures yet. Create your first design." : "No architectures yet."}</div>
+        ) : matches.length === 0 ? (
+          <p>No matching designs.</p>
         ) : (
           <div className="grid">
-            {items.map((a) => (
+            {matches.map((a) => (
               <article className="architecture" key={a.id}>
                 <h3>{a.name}</h3>
-                <p>{a.status}</p>
+                <p>{designStatus(a.status)}</p>
                 <small>{a.provider || "azure"} • {a.environment || "draft"}</small>
                 <div className="actions">
-                  <button onClick={() => setActive(a)}>Open Designer</button>
-                  {canEdit && <>
-                    <button className="dismiss" onClick={() => setRenameTarget(a)}>Rename</button>
-                    <button className="danger" onClick={() => remove(a)}>Delete</button>
-                  </>}
+                  <button onClick={() => openDesign(a)}>Manage design</button>
+                  <button className="dismiss" onClick={() => openDesign(a, true)}>Open designer</button>
                 </div>
               </article>
             ))}
           </div>
         )}
-      </section>
-
-      {!phaseOne && <section className="card">
-        <div className="card-title"><h2>Azure Subscription Inventory</h2><span>{subscriptionInventory.length}</span></div>
-        {inventoryLoading && subscriptionInventory.length === 0 ? (
-          <p>Loading...</p>
-        ) : subscriptionInventory.length === 0 ? (
-          <div className="empty">No Azure subscriptions are mapped yet. Add credentials in Settings, then create or discover subscriptions in Architecture Studio.</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Subscription</th>
-                  <th>Tenant</th>
-                  <th>Architecture</th>
-                  <th>Connection</th>
-                  <th>RGs</th>
-                  <th>Resources</th>
-                  <th>Monitoring</th>
-                  <th>HIPAA</th>
-                  <th>Last Discovery</th>
-                </tr>
-              </thead>
-              <tbody>
-                {subscriptionInventory.map((item) => (
-                  <tr key={item.subscription_db_id}>
-                    <td>
-                      <strong>{item.subscription_name}</strong>
-                      <div style={{ color: "#6f7d97", fontSize: 12 }}>{item.subscription_id || "n/a"}</div>
-                    </td>
-                    <td>{item.tenant_id || "n/a"}</td>
-                    <td>{item.architecture_name}</td>
-                    <td>{item.connection_state}</td>
-                    <td>{item.resource_group_count}</td>
-                    <td>{item.resource_count}</td>
-                    <td>{item.monitoring_state} ({item.live_resource_count}/{item.monitored_resource_count})</td>
-                    <td>{item.hipaa_state}{item.hipaa_score === null ? "" : ` (${item.hipaa_score})`}</td>
-                    <td>{item.last_discovery_sync_at || "never"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </section>}
 
-      {canEdit && createOpen && (
+      {canEdit && form && (
         <ArchitectureFormModal
-          title="New Architecture"
-          initialValue=""
-          onSubmit={create}
-          onClose={() => setCreateOpen(false)}
-          isSubmitting={createSubmitting}
-        />
-      )}
-
-      {canEdit && renameTarget && (
-        <ArchitectureFormModal
-          title="Rename Architecture"
-          initialValue={renameTarget.name}
-          onSubmit={rename}
-          onClose={() => setRenameTarget(null)}
-          isSubmitting={renameSubmitting}
+          title={formTitle[form.mode]}
+          design={form.design}
+          duplicate={form.mode === "duplicate"}
+          onSubmit={save}
+          onClose={() => setForm(null)}
+          isSubmitting={submitting}
+          error={formError}
         />
       )}
     </section>

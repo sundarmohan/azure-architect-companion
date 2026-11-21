@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ArchitectureWorkspace from "./workspaces/ArchitectureWorkspace";
 import AzureConnectionWorkspace from "./workspaces/AzureConnectionWorkspace";
+import AzureInventoryWorkspace from "./workspaces/AzureInventoryWorkspace";
 import { AccountWorkspace, SignInForm } from "./workspaces/AccountWorkspace";
 import { getCurrentUser, logout, onUnauthorized, setApiSession } from "./services/api";
 import "./styles/app.css";
@@ -90,6 +91,7 @@ export default function App() {
         <nav className="nav-list" aria-label="Workspace navigation">
           {activeClient && <>
             <button className={`nav-item ${workspace === "architecture" ? "active" : ""}`} onClick={() => setWorkspace("architecture")}>Architecture Studio</button>
+            <button className={`nav-item ${workspace === "inventory" ? "active" : ""}`} onClick={() => setWorkspace("inventory")}>Azure Inventory</button>
             <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
           </>}
           <button className={`nav-item ${workspace === "account" ? "active" : ""}`} onClick={() => setWorkspace("account")}>Account</button>
@@ -114,8 +116,10 @@ export default function App() {
             onPasswordChanged={() => endSession("Password changed. Sign in with your new password.")} />
         ) : workspace === "azure" ? (
           <AzureConnectionWorkspace canManage={activeClient.role === "admin"} />
+        ) : workspace === "inventory" ? (
+          <AzureInventoryWorkspace canRefresh={canEdit} />
         ) : (
-          <ArchitectureWorkspace phaseOne canEdit={canEdit} />
+          <ArchitectureWorkspace canEdit={canEdit} canApprove={activeClient.role === "admin"} />
         )}
       </main>
     </div>

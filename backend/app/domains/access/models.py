@@ -66,6 +66,7 @@ class AzureInventorySnapshot(Base):
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
     subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
     status: Mapped[str] = mapped_column(String(32))
+    failure_reason: Mapped[str | None] = mapped_column(String(32))
     last_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resource_groups: Mapped[list[dict]] = mapped_column(JSONB, default=list)

@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createArchitecture,
   getCurrentUser,
+  getDesignExport,
   listArchitectures,
   login,
   onUnauthorized,
+  refreshAzureInventory,
   setApiSession,
 } from "./api";
 
@@ -69,5 +71,24 @@ describe("session-aware requests", () => {
     setApiSession("client-a");
     await expect(listArchitectures()).rejects.toMatchObject({ status: 401 });
     expect(expired).toHaveBeenCalledTimes(1);
+  });
+
+  it("scopes the selected subscription and reads downloads as blobs", async () => {
+    const artifact = new Blob(["{}"], { type: "application/json" });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(ok({ status: "synced" }))
+      .mockResolvedValueOnce({ ok: true, status: 200, blob: async () => artifact });
+    vi.stubGlobal("fetch", fetch);
+    setApiSession("client-a");
+
+    await expect(refreshAzureInventory("subscription-a")).resolves.toEqual({ status: "synced" });
+    await expect(getDesignExport("design-a", "definition")).resolves.toBe(artifact);
+
+    const [[inventoryUrl, inventoryOptions], [exportUrl, exportOptions]] = fetch.mock.calls;
+    expect(inventoryUrl).toMatch(/\/azure\/inventory\/refresh\?subscription_id=subscription-a$/);
+    expect(inventoryOptions.headers.get("X-Client-ID")).toBe("client-a");
+    expect(inventoryOptions.headers.get("X-MonitorAI-Request")).toBe("1");
+    expect(exportUrl).toMatch(/\/architectures\/design-a\/exports\/definition$/);
+    expect(exportOptions.headers.get("X-Client-ID")).toBe("client-a");
   });
 });

@@ -44,7 +44,29 @@ checks cover a fresh PostgreSQL migration, backend tests, active frontend
 tests, and the production frontend build. Two historical monitoring suites
 run separately and are currently non-blocking. Reconcile their expectations
 and restore them to required checks when the monitoring UI is re-enabled.
-The background monitoring worker and other unscoped surfaces remain disabled.
+The background monitoring worker remains disabled until the monitoring phase.
+
+## Phase 2 Azure and design workflows
+
+A client administrator configures one Azure tenant and service principal, a
+primary subscription, and up to 25 additional subscription IDs. Use a service
+principal with only the required Azure read access. Refresh from Azure Inventory
+to collect resource group and resource summaries for the selected subscription.
+MonitorAI preserves the last complete snapshot when a refresh fails and displays
+the failure and freshness separately. Inventory does not write back to Azure
+or alter a design.
+
+Architecture Studio provides project and environment filters, duplication,
+revision save/compare/restore, and approval history. Submit a draft for review
+and have a client administrator approve it. Return reviewed designs to draft
+before editing. Approval changes only the design record.
+
+Export architecture definition JSON, a topology SVG, Terraform JSON for
+supported resource groups, virtual networks, and subnets, or an Ansible
+playbook for declared Linux packages and service state. Ansible uses the
+`azure_managed_hosts` inventory group, which an IT manager maps to approved
+hosts separately. Exported files require review. The application never executes
+these files and does not collect host login credentials.
 
 ## Phase 1 access setup
 

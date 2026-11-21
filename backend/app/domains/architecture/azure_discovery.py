@@ -211,12 +211,17 @@ class AzureResourceDiscoveryAdapter:
                     "error": self._api_error_message(response),
                 }
 
-            payload = response.json() or {}
-            page_items = payload.get("value")
-            if not isinstance(page_items, list) or len(items) + len(page_items) > 25000:
+            payload = response.json()
+            if not isinstance(payload, dict):
                 return self._invalid_page()
-            items.extend(item for item in page_items if isinstance(item, dict))
+            page_items = payload.get("value")
+            if (not isinstance(page_items, list) or len(items) + len(page_items) > 25000
+                    or any(not isinstance(item, dict) for item in page_items)):
+                return self._invalid_page()
+            items.extend(page_items)
             next_url = payload.get("nextLink")
+            if next_url is not None and (not isinstance(next_url, str) or not next_url):
+                return self._invalid_page()
             params = None
 
         return {

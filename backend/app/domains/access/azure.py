@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from uuid import UUID
@@ -8,13 +9,13 @@ from azure.core.exceptions import AzureError
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.settings.schemas import AzureIntegrationStatusRead
-from .models import AzureConnection, AzureInventorySnapshot
-from .routes import audit, client_access, client_admin, get_db
+from .models import AzureConnection, AzureInventorySnapshot, Client
+from .routes import audit, client_access, client_admin, current_account, get_db
 
 router = APIRouter()
 
@@ -88,6 +89,13 @@ async def read_status(client_id: UUID = Depends(client_access), db: AsyncSession
 @router.put("/credentials", response_model=ConnectionStatus)
 async def save_credentials(payload: Credentials, request: Request, client_id: UUID = Depends(client_admin),
                            db: AsyncSession = Depends(get_db)):
+    await db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
+    try:
+        previous = await connection_values(db, client_id)
+    except HTTPException as error:
+        if error.status_code != 503:
+            raise
+        previous = None
     values = payload.model_dump(mode="json")
     values["client_secret"] = payload.client_secret.get_secret_value()
     values["additional_subscription_ids"] = [
@@ -96,10 +104,13 @@ async def save_credentials(payload: Credentials, request: Request, client_id: UU
     encrypted = cipher().encrypt(json.dumps(dict(values, workspace_id=str(client_id))).encode()).decode()
     await db.execute(insert(AzureConnection).values(client_id=client_id, ciphertext=encrypted)
         .on_conflict_do_update(index_elements=[AzureConnection.client_id], set_={"ciphertext": encrypted}))
-    await db.execute(delete(AzureInventorySnapshot).where(
-        AzureInventorySnapshot.client_id == client_id,
-        AzureInventorySnapshot.subscription_id.not_in([UUID(item) for item in subscription_ids(values)]),
-    ))
+    retire = delete(AzureInventorySnapshot).where(AzureInventorySnapshot.client_id == client_id)
+    same_identity = previous and all(previous[key] == values[key] for key in ("tenant_id", "client_id"))
+    if same_identity:
+        retire = retire.where(
+            AzureInventorySnapshot.subscription_id.not_in([UUID(item) for item in subscription_ids(values)])
+        )
+    await db.execute(retire)
     audit(db, "save_azure_connection", request.state.account, client_id)
     await db.commit()
     return status_for(values)
@@ -108,11 +119,25 @@ async def save_credentials(payload: Credentials, request: Request, client_id: UU
 @router.delete("/credentials", response_model=ConnectionStatus)
 async def clear_credentials(request: Request, client_id: UUID = Depends(client_admin),
                             db: AsyncSession = Depends(get_db)):
+    await db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
     await db.execute(delete(AzureConnection).where(AzureConnection.client_id == client_id))
     await db.execute(delete(AzureInventorySnapshot).where(AzureInventorySnapshot.client_id == client_id))
     audit(db, "clear_azure_connection", request.state.account, client_id)
     await db.commit()
     return status_for()
+
+
+async def confirm_active_connection(db, request, client_id, ciphertext, *, admin=False):
+    account = await current_account(request, db)
+    await client_access(request, db, account)
+    if admin:
+        await client_admin(request, client_id)
+    current = await db.scalar(select(AzureConnection.ciphertext).where(
+        AzureConnection.client_id == client_id
+    ).with_for_update())
+    if current != ciphertext:
+        raise HTTPException(409, "Azure connection changed during the request")
+    return account
 
 
 async def check_subscription(values):
@@ -130,19 +155,24 @@ async def check_subscription(values):
 async def test_connection(request: Request, subscription_id: UUID | None = None,
                           client_id: UUID = Depends(client_admin),
                           db: AsyncSession = Depends(get_db)):
-    values = await connection_values(db, client_id)
+    connection = await db.get(AzureConnection, client_id)
+    values = await connection_values(db, client_id, connection) if connection else None
     selected = select_subscription(values, subscription_id)
     if not selected:
         return status_for()
+    ciphertext = connection.ciphertext
+    await db.rollback()
     try:
-        response = await check_subscription(dict(values, subscription_id=selected))
+        async with asyncio.timeout(25):
+            response = await check_subscription(dict(values, subscription_id=selected))
         state = {200: "configured", 401: "authentication_failure", 403: "permission_failure"}.get(
             response.status_code, "provider_error")
     except AzureError:
         state = "authentication_failure"
-    except httpx.HTTPError:
+    except (httpx.HTTPError, TimeoutError):
         state = "provider_error"
-    audit(db, "test_azure_connection", request.state.account, client_id, selected,
+    account = await confirm_active_connection(db, request, client_id, ciphertext, admin=True)
+    audit(db, "test_azure_connection", account, client_id, selected,
           outcome="success" if state == "configured" else "failed")
     await db.commit()
     return status_for(values, state)

@@ -29,7 +29,9 @@ def test_inventory_isolated_by_client_and_subscription(monkeypatch):
              {"id": "/subscriptions/foreign/resourceGroups/test", "name": "foreign"}],
             subscription_id, resources=True,
         )
-        return state, groups, resources
+        return inventory.InventoryCollection(
+            state, "permission_failure" if state == "partial_failure" else None, groups, resources
+        )
 
     monkeypatch.setattr(inventory, "collect_inventory", fake_collect)
     with TestClient(app, base_url="https://testserver") as client:
@@ -65,7 +67,11 @@ def test_inventory_isolated_by_client_and_subscription(monkeypatch):
         state = "partial_failure"
         result = client.post(f"{path}/refresh", headers=first_headers, params={"subscription_id": secondary}).json()
         assert result["status"] == "partial_failure"
+        assert result["failure_reason"] == "permission_failure"
         assert result["last_success_at"] and len(result["resources"]) == 1
+        rotated = dict(credentials, client_id=str(uuid4()))
+        assert client.put("/api/settings/azure/credentials", headers=first_headers, json=rotated).status_code == 200
+        assert client.get(path, headers=first_headers, params={"subscription_id": secondary}).json()["status"] == "not_synced"
         assert client.delete("/api/settings/azure/credentials", headers=first_headers).status_code == 200
         assert client.get(path, headers=first_headers).json()["status"] == "not_configured"
 

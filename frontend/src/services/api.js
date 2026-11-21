@@ -23,12 +23,13 @@ function cacheKey(path){return `${sessionGeneration}:${API}${path}`;}
 async function fetchRequest(path,options={}){
  const generation=sessionGeneration;
  const authRoute=path.startsWith("/auth/");
+ const {responseType,...fetchOptions}=options;
  const method=(options.method||"GET").toUpperCase();
  const headers=new Headers(options.headers);
  if(options.body) headers.set("Content-Type","application/json");
  if(method!=="GET") headers.set("X-MonitorAI-Request","1");
  if(clientId&&!authRoute) headers.set("X-Client-ID",clientId);
- const r=await fetch(`${API}${path}`,{...options,headers,credentials:"include",cache:"no-store"});
+ const r=await fetch(`${API}${path}`,{...fetchOptions,headers,credentials:"include",cache:"no-store"});
  const verifySession=()=>{
   if(!authRoute&&generation!==sessionGeneration){
    throw new DOMException("The active client changed.","AbortError");
@@ -51,7 +52,7 @@ async function fetchRequest(path,options={}){
   error.status=r.status;
   throw error;
  }
- const data=r.status===204?null:await r.json();
+ const data=r.status===204?null:responseType==="blob"?await r.blob():await r.json();
  verifySession();
  return data;
 }
@@ -109,6 +110,19 @@ export const listArchitectures=()=>request("/architectures");
 export const createArchitecture=data=>request("/architectures",{method:"POST",body:JSON.stringify(data)});
 export const updateArchitecture=(id,data)=>request(`/architectures/${id}`,{method:"PUT",body:JSON.stringify(data)});
 export const deleteArchitecture=id=>request(`/architectures/${id}`,{method:"DELETE"});
+export const duplicateArchitecture=(id,data)=>request(`/architectures/${id}/duplicate`,{method:"POST",body:JSON.stringify(data)});
+export const transitionArchitecture=(id,data)=>request(`/architectures/${id}/status`,{method:"POST",body:JSON.stringify(data)});
+export const listDesignHistory=id=>request(`/architectures/${id}/history`);
+export const listDesignRevisions=id=>request(`/architectures/${id}/revisions`);
+export const saveDesignRevision=(id,data)=>request(`/architectures/${id}/revisions`,{method:"POST",body:JSON.stringify(data)});
+export const getDesignRevision=(id,revision)=>request(`/architectures/${id}/revisions/${revision}`);
+export const compareDesignRevisions=(id,from,to)=>request(`/architectures/${id}/revisions/${from}/compare?to=${encodeURIComponent(to)}`);
+export const restoreDesignRevision=(id,revision,data)=>request(`/architectures/${id}/revisions/${revision}/restore`,{method:"POST",body:JSON.stringify(data)});
+export const getDesignValidation=id=>request(`/architectures/${id}/validation`);
+export const getDesignExport=(id,format)=>fetchRequest(`/architectures/${id}/exports/${format}`,{responseType:"blob"});
+export const getAnsibleExport=(id,data)=>fetchRequest(`/architectures/${id}/exports/ansible`,{
+ method:"POST",body:JSON.stringify(data),responseType:"blob",
+});
 export const listResources=id=>request(`/architectures/${id}/resources`);
 export const createResource=(id,data)=>request(`/architectures/${id}/resources`,{method:"POST",body:JSON.stringify(data)});
 export const updateResource=(aid,rid,data)=>request(`/architectures/${aid}/resources/${rid}`,{method:"PUT",body:JSON.stringify(data)});
@@ -129,6 +143,9 @@ export const listAzureResourceCatalog=()=>request("/azure/resource-catalog");
 export const listAzureResourceCapabilities=()=>request("/azure/resource-capabilities");
 export const listAzureArchitecturePatterns=()=>request("/azure/architecture-patterns");
 export const listAzureResourceConfigurations=()=>request("/azure/resource-configurations");
+const subscriptionQuery=id=>id?`?subscription_id=${encodeURIComponent(id)}`:"";
+export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQuery(id)}`);
+export const refreshAzureInventory=id=>request(`/azure/inventory/refresh${subscriptionQuery(id)}`,{method:"POST"});
 export const discoverAzureResources=(id,data)=>request(`/architectures/${id}/discover-resources`,{method:"POST",body:JSON.stringify(data)});
 export const getResourceMonitoring=(aid,rid,data={})=>request(`/architectures/${aid}/resources/${rid}/monitoring`,{method:"POST",body:JSON.stringify(data)});
 export const getArchitectureMonitoringSummary=(aid,data={})=>request(`/architectures/${aid}/monitoring-summary`,{method:"POST",body:JSON.stringify(data)});
@@ -157,7 +174,7 @@ export const clearProviderApiKey=provider=>request(`/settings/providers/${provid
 export const testProviderConnection=provider=>request(`/settings/providers/${provider}/test`,{method:"POST",body:JSON.stringify({})});
 export const saveAzureCredentials=data=>request("/settings/azure/credentials",{method:"PUT",body:JSON.stringify(data)});
 export const clearAzureCredentials=()=>request("/settings/azure/credentials",{method:"DELETE"});
-export const testAzureIntegration=()=>request("/settings/azure/test",{method:"POST",body:JSON.stringify({})});
+export const testAzureIntegration=id=>request(`/settings/azure/test${subscriptionQuery(id)}`,{method:"POST",body:JSON.stringify({})});
 export const listAzureSubscriptionInventory=()=>request("/settings/azure/subscriptions");
 export const listCloudAccounts=()=>request("/settings/cloud-accounts");
 export const getCloudAccountStatus=provider=>request(`/settings/cloud-accounts/${provider}/status`);
