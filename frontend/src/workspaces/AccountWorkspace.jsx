@@ -47,7 +47,7 @@ function AccountForm({ title, action, result, onSubmit, children }) {
     try {
       await onSubmit(Object.fromEntries(new FormData(form)));
       form.reset();
-      setFeedback({ text: result });
+      if (result) setFeedback({ text: result });
     } catch (error) {
       setFeedback({ error: true, text: error.message });
     } finally {

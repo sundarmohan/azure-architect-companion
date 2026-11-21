@@ -34,12 +34,11 @@ export default function App() {
     setNotice(message);
   }, []);
 
-  const refreshUser = useCallback(async (preferredClient) => {
+  const refreshUser = useCallback(async () => {
     const version = sessionVersion.current;
     const account = await getCurrentUser();
     if (version !== sessionVersion.current) return;
-    const preferred = preferredClient || currentClient.current;
-    const client = account.memberships.find((item) => item.client_id === preferred) || account.memberships[0];
+    const client = account.memberships.find((item) => item.client_id === currentClient.current) || account.memberships[0];
     selectClient(client?.client_id || "");
     setUser(account);
   }, [selectClient]);

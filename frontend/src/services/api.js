@@ -28,7 +28,7 @@ async function fetchRequest(path,options={}){
  if(options.body) headers.set("Content-Type","application/json");
  if(method!=="GET") headers.set("X-MonitorAI-Request","1");
  if(clientId&&!authRoute) headers.set("X-Client-ID",clientId);
- const r=await fetch(`${API}${path}`,{...options,headers,credentials:"include"});
+ const r=await fetch(`${API}${path}`,{...options,headers,credentials:"include",cache:"no-store"});
  const verifySession=()=>{
   if(!authRoute&&generation!==sessionGeneration){
    throw new DOMException("The active client changed.","AbortError");
@@ -99,7 +99,7 @@ const authWrite=(path,data)=>fetchRequest(`/auth/${path}`,{
 });
 export const login=(username,password)=>authWrite("login",{username,password});
 export const logout=()=>authWrite("logout");
-export const getCurrentUser=()=>fetchRequest("/auth/me",{cache:"no-store"});
+export const getCurrentUser=()=>fetchRequest("/auth/me");
 export const changePassword=data=>authWrite("password",data);
 export const createUser=data=>authWrite("users",data);
 export const resetUserPassword=(username,data)=>authWrite(`users/${encodeURIComponent(username)}/password`,data);
