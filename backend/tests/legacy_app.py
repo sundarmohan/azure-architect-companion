@@ -14,7 +14,7 @@ from app.domains.access.routes import get_db
 from app.domains.monitoring.connection_routes import router as monitoring_router
 from app.domains.reports.routes import router as reports_router
 from app.domains.settings.routes import router as settings_router
-from app.main import run_migrations
+from app.main import health, run_migrations
 
 
 @asynccontextmanager
@@ -25,6 +25,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_api_route("/health", health)
 app.include_router(architecture_router, prefix="/api/architectures")
 app.include_router(azure_router, prefix="/api/azure")
 app.include_router(reports_router, prefix="/api/reports")
