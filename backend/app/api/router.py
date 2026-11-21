@@ -5,8 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.azure import router as settings_router
+from app.domains.access.inventory import router as inventory_router
 from app.domains.access.routes import audit, client_access, get_db, require_request_header
 from app.domains.access.routes import router as auth_router
+from app.domains.architecture.artifacts import router as artifacts_router
+from app.domains.architecture.lifecycle import router as lifecycle_router
 from app.domains.architecture.azure_routes import router as azure_router
 from app.domains.architecture.models import Architecture
 from app.domains.architecture.routes import router as architecture_router
@@ -16,28 +19,41 @@ GRAPH_ENDPOINTS = {
     "delete_architecture", "list_resources", "create_resource", "update_resource", "delete_resource",
     "list_relationships", "create_relationship", "delete_relationship", "validate_relationship",
     "list_subscriptions", "create_subscription", "list_resource_groups", "create_resource_group",
-    "update_resource_group", "delete_resource_group", "list_dependencies",
+    "update_resource_group", "delete_resource_group", "list_dependencies", "estimate_architecture_cost",
 }
+
+
+READ_ONLY_POSTS = {"validate_relationship", "estimate_architecture_cost"}
 
 
 async def authorize_graph(request: Request, client_id: UUID = Depends(client_access),
                           db: AsyncSession = Depends(get_db)):
     endpoint = request.scope["route"].name
     if endpoint not in GRAPH_ENDPOINTS:
-        raise HTTPException(403, "This operation is unavailable in Phase 1")
+        raise HTTPException(403, "This feature is unavailable in the current phase")
+    mutating = request.method not in {"GET", "HEAD"} and endpoint not in READ_ONLY_POSTS
     architecture_id = request.path_params.get("architecture_id")
     if architecture_id is not None:
         try:
             parsed = UUID(architecture_id)
         except ValueError:
             raise HTTPException(404, "Architecture not found") from None
-        if not await db.scalar(select(Architecture.id).where(
+        lookup = select(Architecture.status).where(
             Architecture.id == parsed, Architecture.client_id == client_id
-        )):
+        )
+        stage = await db.scalar(lookup.with_for_update() if mutating else lookup)
+        if stage is None:
             audit(db, "architecture_access", request.state.account, client_id, str(parsed), "denied")
             await db.commit()
             raise HTTPException(404, "Architecture not found")
-    if request.method not in {"GET", "HEAD"} and endpoint != "validate_relationship":
+        if endpoint == "delete_architecture":
+            if request.state.client_role != "admin":
+                raise HTTPException(403, "Client administrator required")
+            if stage not in {"draft", "archived"}:
+                raise HTTPException(409, "Archive the design before deleting it")
+        elif mutating and stage != "draft":
+            raise HTTPException(409, "Only draft designs can be edited")
+    if mutating:
         audit(db, endpoint, request.state.account, client_id, architecture_id)
 
 
@@ -47,3 +63,6 @@ api_router.include_router(architecture_router, prefix="/architectures", tags=["a
                           dependencies=[Depends(authorize_graph)])
 api_router.include_router(azure_router, prefix="/azure", tags=["azure"], dependencies=[Depends(client_access)])
 api_router.include_router(settings_router, prefix="/settings/azure", tags=["settings"])
+api_router.include_router(inventory_router, prefix="/azure", tags=["azure-inventory"])
+api_router.include_router(lifecycle_router, prefix="/architectures", tags=["design-lifecycle"])
+api_router.include_router(artifacts_router, prefix="/architectures", tags=["design-artifacts"])

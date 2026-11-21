@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -179,7 +180,17 @@ class AzureResourceDiscoveryAdapter:
         next_url: str | None = url
         params: dict[str, str] | None = {"api-version": api_version}
 
+        expected_path = urlsplit(url).path.casefold()
+        visited = set()
         while next_url:
+            if not isinstance(next_url, str):
+                return self._invalid_page()
+            target = urlsplit(next_url)
+            if (target.scheme != "https" or target.netloc != "management.azure.com"
+                    or target.path.casefold() != expected_path or target.fragment
+                    or next_url in visited or len(visited) >= 200):
+                return self._invalid_page()
+            visited.add(next_url)
             response = await client.get(next_url, params=params, headers=headers)
             if response.status_code == 401:
                 return {
@@ -201,11 +212,10 @@ class AzureResourceDiscoveryAdapter:
                 }
 
             payload = response.json() or {}
-            page_items = payload.get("value") or []
-            if isinstance(page_items, list):
-                for page_item in page_items:
-                    if isinstance(page_item, dict):
-                        items.append(page_item)
+            page_items = payload.get("value")
+            if not isinstance(page_items, list) or len(items) + len(page_items) > 25000:
+                return self._invalid_page()
+            items.extend(item for item in page_items if isinstance(item, dict))
             next_url = payload.get("nextLink")
             params = None
 
@@ -213,6 +223,14 @@ class AzureResourceDiscoveryAdapter:
             "success": True,
             "connection_state": "configured_connected",
             "items": items,
+        }
+
+    @staticmethod
+    def _invalid_page() -> dict[str, Any]:
+        return {
+            "success": False,
+            "connection_state": "azure_api_failure",
+            "error": "Azure inventory pagination was invalid or exceeded collection limits",
         }
 
     def _normalize_group(self, item: dict[str, Any], subscription_id: str) -> dict[str, Any]:

@@ -224,15 +224,26 @@ def validate_relationship_rule(source_type: str, target_type: str, relationship_
 
 
 @router.get("", response_model=list[ArchitectureRead])
-async def list_architectures(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Architecture).where(Architecture.client_id == db.info["client_id"]).order_by(Architecture.created_at.desc()))
+async def list_architectures(project: str | None = None, environment: str | None = None,
+                             db: AsyncSession = Depends(get_db)):
+    query = select(Architecture).where(Architecture.client_id == db.info["client_id"])
+    if project is not None:
+        query = query.where(Architecture.project == project.strip())
+    if environment is not None:
+        query = query.where(Architecture.environment == environment.strip())
+    result = await db.execute(query.order_by(Architecture.created_at.desc()))
     return list(result.scalars().all())
 
 @router.post("", response_model=ArchitectureRead, status_code=201)
 async def create_architecture(payload: ArchitectureCreate, db: AsyncSession = Depends(get_db)):
     if payload.provider != "azure":
         raise HTTPException(422, "Only Azure architectures are supported")
-    item = Architecture(client_id=db.info["client_id"], **payload.model_dump())
+    if payload.status != "draft":
+        raise HTTPException(422, "New designs must start as drafts")
+    values = payload.model_dump()
+    values["project"] = payload.project.strip() if payload.project else None
+    values["environment"] = payload.environment.strip()
+    item = Architecture(client_id=db.info["client_id"], **values)
     db.add(item)
     await db.flush()
     await ensure_default_dependencies(db, item.id)
@@ -250,6 +261,13 @@ async def update_architecture(architecture_id: UUID, payload: ArchitectureUpdate
     changes = payload.model_dump(exclude_unset=True)
     if changes.get("provider", "azure") != "azure":
         raise HTTPException(422, "Only Azure architectures are supported")
+    if "status" in changes:
+        raise HTTPException(422, "Use the design status endpoint to transition this design")
+    if any(field in changes and changes[field] is None for field in ("name", "environment", "graph_data")):
+        raise HTTPException(422, "Name, environment and graph data cannot be null")
+    for field in ("project", "environment"):
+        if changes.get(field):
+            changes[field] = changes[field].strip()
     for key, value in changes.items():
         setattr(item, key, value)
     await db.commit(); await db.refresh(item); return item

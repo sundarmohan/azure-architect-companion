@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ArchitectureBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    project: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"\S")
     description: str | None = None
     provider: str = "azure"
     environment: str = "draft"
@@ -10,13 +11,15 @@ class ArchitectureBase(BaseModel):
     default_region: str | None = None
     graph_data: dict = Field(default_factory=dict)
 
-class ArchitectureCreate(ArchitectureBase): pass
+class ArchitectureCreate(ArchitectureBase):
+    environment: str = Field(default="draft", min_length=1, max_length=50, pattern=r"\S")
 
 class ArchitectureUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    project: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"\S")
     description: str | None = None
     provider: str | None = None
-    environment: str | None = None
+    environment: str | None = Field(default=None, min_length=1, max_length=50, pattern=r"\S")
     status: str | None = None
     default_region: str | None = None
     graph_data: dict | None = None
