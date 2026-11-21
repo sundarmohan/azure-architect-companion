@@ -393,7 +393,9 @@ class TerraformExecutionService:
                 "show",
                 runtime_environment,
                 {0},
+                include_raw_stdout=True,
             )
+            raw_plan_json = show_result.pop("raw_stdout", None)
             if show_result["status"] != "SUCCEEDED":
                 cls._save_command_result(execution, "show", show_result)
                 return cls._fail_operation(
@@ -405,7 +407,7 @@ class TerraformExecutionService:
                 )
 
             try:
-                plan_document = json.loads(show_result["stdout"] or "{}")
+                plan_document = json.loads(raw_plan_json or "{}")
                 summary = cls.normalize_plan(plan_document)
             except (json.JSONDecodeError, TypeError, ValueError) as error:
                 invalid_result = {
@@ -772,6 +774,7 @@ class TerraformExecutionService:
         operation: str,
         runtime_environment: Optional[Dict[str, str]],
         accepted_exit_codes: Set[int],
+        include_raw_stdout: bool = False,
     ) -> dict:
         command_runner = runner or TerraformCommandRunner()
         secret_values = [
@@ -787,7 +790,7 @@ class TerraformExecutionService:
                 runtime_environment,
             )
             exit_code = raw.get("exit_code")
-            return {
+            result = {
                 "operation": operation,
                 "status": "SUCCEEDED" if exit_code in accepted_exit_codes else "FAILED",
                 "exit_code": exit_code,
@@ -795,6 +798,11 @@ class TerraformExecutionService:
                 "stderr": cls._redact_and_limit(raw.get("stderr", ""), secret_values),
                 "error_code": None if exit_code in accepted_exit_codes else "TERRAFORM_COMMAND_FAILED",
             }
+            if include_raw_stdout:
+                # In-memory only (e.g. plan JSON parsing): redaction would corrupt
+                # the JSON. Callers must pop this key before persisting results.
+                result["raw_stdout"] = raw.get("stdout", "")
+            return result
         except FileNotFoundError:
             return {
                 "operation": operation,

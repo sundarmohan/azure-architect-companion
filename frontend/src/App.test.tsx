@@ -37,7 +37,7 @@ describe('App integration', () => {
   it('loads an architecture and canvas', async () => {
     render(<App />)
     expect(await screen.findByText('Production platform')).toBeInTheDocument()
-    expect(screen.getByTestId('canvas')).toBeInTheDocument()
+    expect(await screen.findByTestId('canvas')).toBeInTheDocument()
   })
 
   it('version selector exposes backend versions', async () => {
@@ -63,7 +63,7 @@ describe('App integration', () => {
     mocked.validate.mockResolvedValue({ architecture_id: 'a1', architecture_version_id: 'v2', status: 'VALID', error_count: 0, warning_count: 0, info_count: 0, total_findings: 0, findings: [] })
     render(<App />)
     await screen.findByText('Production platform')
-    await userEvent.click(screen.getByText('Connect test nodes'))
+    await userEvent.click(await screen.findByText('Connect test nodes'))
     await userEvent.type(screen.getByLabelText('Relationship type'), 'routes_to')
     await userEvent.click(screen.getByText('Create relationship'))
     await waitFor(() => expect(mocked.createRelationship).toHaveBeenCalledWith('a1', 'v2', 'r1', 'r2', 'routes_to'))

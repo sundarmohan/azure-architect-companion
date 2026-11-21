@@ -561,11 +561,14 @@ class AzureResourceIntelligenceService:
     @classmethod
     def _location_matches(cls, requested: str, locations: list[Any], aliases: list[dict[str, Any]]) -> bool:
         candidates = {str(item).casefold() for item in locations if item}
+        # Expand the *requested* region to its known names (e.g. "eastus" ->
+        # "East US"), then check whether any of them is in the offered locations.
+        requested_names = {requested.casefold()}
         for alias in aliases:
             values = {alias.get("name"), alias.get("display_name"), *(alias.get("aliases") or [])}
             if any(isinstance(value, str) and value.casefold() == requested.casefold() for value in values):
-                candidates.update(str(value).casefold() for value in values if value)
-        return requested.casefold() in candidates
+                requested_names.update(str(value).casefold() for value in values if value)
+        return bool(requested_names & candidates)
 
     @classmethod
     def _region_restricted(cls, region: str, restrictions: list[dict[str, Any]]) -> bool:
