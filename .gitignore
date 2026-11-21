@@ -69,3 +69,20 @@ logs/
 
 # Alembic
 alembic/versions/__pycache__/
+
+# Node / frontend build
+node_modules/
+frontend/dist/
+
+# Local-only data and scratch files (never commit DB dumps or exports)
+backups/
+*.dump
+*.sql.gz
+PHASE_F_*.tsv
+tmp_*.py
+
+# Reference projects kept locally during consolidation (not part of this repo)
+/Monitor2.0/
+/azure-archtect-companion/
+/monitorai-main/
+/CONSOLIDATION_INSTRUCTIONS.md

@@ -72,3 +72,20 @@ README.md
 DEPLOYMENT.md
 QUALITY_GATE.md
 MILESTONE_*.md
+
+# Node / local artefacts
+node_modules
+**/node_modules
+frontend/dist
+backups
+**/*.dump
+PHASE_F_*.tsv
+tmp_*.py
+backend/tests
+
+# Reference projects (local only)
+Monitor2.0
+azure-archtect-companion
+monitorai-main
+CONSOLIDATION_INSTRUCTIONS.md
+PROJECT_REQUIREMENTS.md

@@ -1,17 +1,21 @@
+# Production / EC2 stack for MonitorAI V2.2 (deployed by .github/workflows/docker-deploy.yml).
+# Local development uses docker-compose.dev-db.yml + scripts/start-unified-dev.ps1 instead.
 services:
   postgres:
-    image: postgres:15-alpine
-    container_name: azure-architect-postgres
+    image: postgres:16-alpine
+    container_name: monitorai-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-azure_architect}
+      POSTGRES_USER: ${POSTGRES_USER:-monitorai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-monitorai}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # New volume: the previous Azure Architect Companion volume (postgres_data)
+      # is left untouched so its data stays available for rollback.
+      - monitorai_pg_data:/var/lib/postgresql/data
     # No host port: the app reaches Postgres over app-network, and the EC2 host
     # already has a service on 5432. Use `docker compose exec postgres psql` for access.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-azure_architect}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monitorai} -d ${POSTGRES_DB:-monitorai}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,16 +25,12 @@ services:
 
   app:
     image: ${DOCKER_IMAGE:-ghcr.io/sundarmohan/azure-architect-companion}:${IMAGE_TAG:-latest}
-    container_name: azure-architect-app
+    container_name: monitorai-app
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      # Always connect to the compose postgres service (localhost inside the
-      # container is the app container itself, not the database).
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-azure_architect}
-      APP_NAME: ${APP_NAME:-Azure Architect Companion}
-      DEBUG: ${DEBUG:-False}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-monitorai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-monitorai}
     ports:
       - "${APP_PORT:-8001}:8000"
     healthcheck:
@@ -38,13 +38,13 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 40s
     networks:
       - app-network
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  monitorai_pg_data:
     driver: local
 
 networks:

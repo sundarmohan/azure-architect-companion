@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  # Pull requests run the test jobs only; build and deploy are gated to main.
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -21,6 +25,26 @@ jobs:
     name: test
     runs-on: ubuntu-latest
 
+    # The app's startup hook runs Alembic migrations, so route tests need a real
+    # PostgreSQL. This is a throwaway CI-only database.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: monitorai
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: monitorai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U monitorai -d monitorai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://monitorai:ci_only_password@localhost:5432/monitorai
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,7 +52,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
@@ -46,8 +70,6 @@ jobs:
 
       - name: Verify Alembic migration chain
         working-directory: backend
-        env:
-          DATABASE_URL: sqlite:///./alembic_check.db
         run: |
           alembic heads
           alembic history | head -20
@@ -66,7 +88,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run tests
         working-directory: frontend
@@ -78,6 +100,7 @@ jobs:
 
   build-and-push:
     needs: [backend-test, frontend-test]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -113,6 +136,7 @@ jobs:
 
   deploy:
     needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -166,13 +190,13 @@ jobs:
 
             docker compose ps
             docker compose exec -T app alembic current
-            docker compose exec -T app python -c "from app.models import Relationship, ResourceCatalog; assert hasattr(Relationship, 'relationship_metadata'); assert hasattr(ResourceCatalog, 'resource_metadata'); print('Models imported successfully')"
 
             # End-to-end smoke checks against the running container
             curl --fail --show-error --silent http://localhost:8001/health
             curl --fail --show-error --silent -o /dev/null http://localhost:8001/
             curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/architectures
-            curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/catalog/resources
+            curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/azure/resource-catalog
+            curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/settings
             docker compose logs --tail=100 app
 
       - name: Verify public accessibility

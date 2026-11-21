@@ -1,0 +1,1153 @@
+{
+  "provider": "azure",
+  "display_name": "Microsoft Azure",
+  "provider_version": "3.110-stub",
+  "pricing_source": "azure-retail-prices-stub",
+  "regions": [
+    {
+      "id": "eastus",
+      "display": "East US",
+      "multiplier": 1.0
+    },
+    {
+      "id": "westus2",
+      "display": "West US 2",
+      "multiplier": 1.02
+    },
+    {
+      "id": "centralus",
+      "display": "Central US",
+      "multiplier": 1.01
+    },
+    {
+      "id": "westeurope",
+      "display": "West Europe",
+      "multiplier": 1.12
+    },
+    {
+      "id": "uksouth",
+      "display": "UK South",
+      "multiplier": 1.11
+    }
+  ],
+  "resource_schemas": {
+    "azure-vm": {
+      "display_name": "Virtual Machine",
+      "category": "Compute",
+      "icon": "azure-vm",
+      "description": "IaaS virtual machine with managed disks and network interfaces.",
+      "terraform_resource": "azurerm_linux_virtual_machine",
+      "bicep_resource": "Microsoft.Compute/virtualMachines",
+      "family": "compute",
+      "required_properties": ["admin_username"],
+      "dependencies": ["azure-vnet", "azure-subnet"],
+      "dependency_hints": ["azure-vnet", "azure-subnet"],
+      "default_region": "eastus",
+      "default_sku": "Standard_D2s_v5",
+      "allowed_skus": ["Standard_B2s", "Standard_D2s_v5", "Standard_D4s_v5", "Standard_D8s_v5", "Standard_E2s_v5", "Standard_E4s_v5"],
+      "compliance_tags": ["HIPAA", "GDPR", "SOC2"],
+      "default_properties": {
+        "admin_username": "azureadmin",
+        "os_disk_type": "Premium_LRS",
+        "encryption_at_rest": true,
+        "public_access": false,
+        "managed_identity": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard_D2s_v5",
+        "tiers": {
+          "Standard_B2s": 32.0,
+          "Standard_D2s_v5": 92.0,
+          "Standard_D4s_v5": 184.0,
+          "Standard_D8s_v5": 368.0,
+          "Standard_E2s_v5": 140.0,
+          "Standard_E4s_v5": 280.0
+        }
+      }
+    },
+    "azure-container-apps": {
+      "display_name": "Container Apps",
+      "category": "Compute",
+      "icon": "azure-container-apps",
+      "description": "Serverless container hosting with auto-scaling and Dapr integration.",
+      "terraform_resource": "azurerm_container_app",
+      "bicep_resource": "Microsoft.App/containerApps",
+      "family": "container",
+      "required_properties": ["image"],
+      "dependencies": ["azure-container-apps-environment"],
+      "dependency_hints": ["azure-container-apps-environment", "azure-vnet"],
+      "default_region": "eastus",
+      "default_sku": "Consumption",
+      "allowed_skus": ["Consumption", "Dedicated_D4"],
+      "compliance_tags": ["HIPAA", "GDPR", "SOC2"],
+      "default_properties": {
+        "ingress_enabled": true,
+        "target_port": 80,
+        "min_replicas": 0,
+        "max_replicas": 10,
+        "managed_identity": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Consumption",
+        "tiers": {
+          "Consumption": 55.0,
+          "Dedicated_D4": 240.0
+        }
+      }
+    },
+    "azure-container-apps-environment": {
+      "display_name": "Container Apps Environment",
+      "category": "Compute",
+      "icon": "azure-container-apps-environment",
+      "description": "Managed Kubernetes environment for Container Apps with workload profiles.",
+      "terraform_resource": "azurerm_container_app_environment",
+      "bicep_resource": "Microsoft.App/managedEnvironments",
+      "family": "container",
+      "required_properties": [],
+      "dependencies": ["azure-vnet"],
+      "dependency_hints": ["azure-vnet", "azure-logs"],
+      "default_region": "eastus",
+      "default_sku": "Consumption",
+      "allowed_skus": ["Consumption", "Workload_Profiles"],
+      "compliance_tags": ["HIPAA", "GDPR", "SOC2"],
+      "default_properties": {
+        "zone_redundant": false,
+        "internal_load_balancer_enabled": false
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Consumption",
+        "tiers": {
+          "Consumption": 0.0,
+          "Workload_Profiles": 150.0
+        }
+      }
+    },
+    "azure-redis": {
+      "display_name": "Azure Cache for Redis",
+      "category": "Databases",
+      "icon": "azure-redis",
+      "description": "In-memory data store for caching, session management, and real-time messaging.",
+      "terraform_resource": "azurerm_redis_cache",
+      "bicep_resource": "Microsoft.Cache/redis",
+      "family": "cache",
+      "required_properties": [],
+      "dependencies": ["azure-vnet"],
+      "dependency_hints": ["azure-vnet", "azure-private-endpoint"],
+      "default_region": "eastus",
+      "default_sku": "Standard_C1",
+      "allowed_skus": ["Basic_C0", "Standard_C1", "Premium_P1"],
+      "compliance_tags": ["HIPAA", "GDPR", "SOC2"],
+      "default_properties": {
+        "minimum_tls_version": "1.2",
+        "public_network_access": false,
+        "redis_version": "6"
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard_C1",
+        "tiers": {
+          "Basic_C0": 16.0,
+          "Standard_C1": 81.0,
+          "Premium_P1": 212.0
+        }
+      }
+    },
+    "azure-vnet": {
+      "display_name": "Virtual Network",
+      "category": "Network",
+      "icon": "azure-vnet",
+      "description": "Segmented virtual network boundary for workloads.",
+      "terraform_resource": "azurerm_virtual_network",
+      "bicep_resource": "Microsoft.Network/virtualNetworks",
+      "family": "network",
+      "required_properties": [
+        "address_space"
+      ],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "address_space": [
+          "10.20.0.0/16"
+        ],
+        "ddos_protection": true,
+        "encryption_in_transit": true,
+        "public_access": false
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 18.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "properties": {
+            "address_space": [
+              "10.21.0.0/16"
+            ]
+          }
+        },
+        "qa": {
+          "properties": {
+            "address_space": [
+              "10.22.0.0/16"
+            ]
+          }
+        },
+        "prod": {
+          "properties": {
+            "address_space": [
+              "10.23.0.0/16"
+            ]
+          }
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-subnet": {
+      "display_name": "Subnet",
+      "category": "Network",
+      "icon": "azure-subnet",
+      "description": "Private application subnet inside the workload VNet.",
+      "terraform_resource": "azurerm_subnet",
+      "bicep_resource": "Microsoft.Network/virtualNetworks/subnets",
+      "family": "subnet",
+      "required_properties": [
+        "address_prefixes"
+      ],
+      "dependencies": [
+        "azure-vnet"
+      ],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "address_prefixes": [
+          "10.20.1.0/24"
+        ],
+        "private_endpoint_policies_enabled": false
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 0.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "properties": {
+            "address_prefixes": [
+              "10.21.1.0/24"
+            ]
+          }
+        },
+        "qa": {
+          "properties": {
+            "address_prefixes": [
+              "10.22.1.0/24"
+            ]
+          }
+        },
+        "prod": {
+          "properties": {
+            "address_prefixes": [
+              "10.23.1.0/24"
+            ]
+          }
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-app": {
+      "display_name": "App Service",
+      "category": "Compute",
+      "icon": "azure-app",
+      "description": "Managed web application with private ingress support.",
+      "terraform_resource": "azurerm_linux_web_app",
+      "bicep_resource": "Microsoft.Web/sites",
+      "family": "web_app",
+      "required_properties": [
+        "runtime_stack"
+      ],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "P1v3",
+      "allowed_skus": [
+        "B1",
+        "S1",
+        "P1v3"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "runtime_stack": "PYTHON|3.12",
+        "https_only": true,
+        "managed_identity": true,
+        "public_access": false,
+        "encryption_in_transit": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "P1v3",
+        "tiers": {
+          "B1": 55.0,
+          "S1": 110.0,
+          "P1v3": 210.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "B1"
+        },
+        "qa": {
+          "sku": "S1"
+        },
+        "prod": {
+          "sku": "P1v3"
+        }
+      },
+      "connection_hints": [
+        {
+          "target_types": [
+            "azure-sql",
+            "azure-postgres",
+            "azure-blob"
+          ],
+          "connection_label": "private-link",
+          "bridge_type": "azure-private-endpoint",
+          "bridge_display_name": "Private Endpoint",
+          "required_when_profiles": [
+            "HIPAA",
+            "GDPR"
+          ],
+          "reason": "Sensitive data paths must stay on private connectivity."
+        }
+      ]
+    },
+    "azure-func": {
+      "display_name": "Function App",
+      "category": "Compute",
+      "icon": "azure-func",
+      "description": "Serverless function with private storage and TLS defaults.",
+      "terraform_resource": "azurerm_linux_function_app",
+      "bicep_resource": "Microsoft.Web/sites",
+      "family": "function",
+      "required_properties": [
+        "runtime_stack"
+      ],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "EP1",
+      "allowed_skus": [
+        "Y1",
+        "EP1"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "runtime_stack": "python",
+        "managed_identity": true,
+        "public_access": false,
+        "encryption_in_transit": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "EP1",
+        "tiers": {
+          "Y1": 18.0,
+          "EP1": 145.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Y1"
+        },
+        "qa": {
+          "sku": "EP1"
+        },
+        "prod": {
+          "sku": "EP1"
+        }
+      },
+      "connection_hints": [
+        {
+          "target_types": [
+            "azure-sql",
+            "azure-blob",
+            "azure-postgres"
+          ],
+          "connection_label": "private-link",
+          "bridge_type": "azure-private-endpoint",
+          "bridge_display_name": "Private Endpoint",
+          "required_when_profiles": [
+            "HIPAA",
+            "GDPR"
+          ],
+          "reason": "Private service access avoids exposing regulated data endpoints."
+        }
+      ]
+    },
+    "azure-aks": {
+      "display_name": "AKS Cluster",
+      "category": "Compute",
+      "icon": "azure-aks",
+      "description": "Private AKS cluster with managed identity and workload network controls.",
+      "terraform_resource": "azurerm_kubernetes_cluster",
+      "bicep_resource": "Microsoft.ContainerService/managedClusters",
+      "family": "kubernetes",
+      "required_properties": [
+        "node_count"
+      ],
+      "dependencies": [
+        "azure-vnet",
+        "azure-subnet"
+      ],
+      "default_region": "eastus",
+      "default_sku": "Standard_D4s_v5",
+      "allowed_skus": [
+        "Standard_D2s_v5",
+        "Standard_D4s_v5",
+        "Standard_D8s_v5"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "node_count": 2,
+        "private_cluster_enabled": true,
+        "managed_identity": true,
+        "network_policy": "azure",
+        "encryption_at_rest": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard_D4s_v5",
+        "tiers": {
+          "Standard_D2s_v5": 160.0,
+          "Standard_D4s_v5": 320.0,
+          "Standard_D8s_v5": 640.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Standard_D2s_v5",
+          "properties": {
+            "node_count": 1
+          }
+        },
+        "qa": {
+          "sku": "Standard_D4s_v5",
+          "properties": {
+            "node_count": 2
+          }
+        },
+        "prod": {
+          "sku": "Standard_D8s_v5",
+          "properties": {
+            "node_count": 3
+          }
+        }
+      },
+      "connection_hints": [
+        {
+          "target_types": [
+            "azure-sql",
+            "azure-postgres",
+            "azure-blob"
+          ],
+          "connection_label": "private-link",
+          "bridge_type": "azure-private-endpoint",
+          "bridge_display_name": "Private Endpoint",
+          "required_when_profiles": [
+            "HIPAA",
+            "GDPR"
+          ],
+          "reason": "Cluster-to-data traffic should use private endpoints under regulated profiles."
+        }
+      ]
+    },
+    "azure-blob": {
+      "display_name": "Storage Account",
+      "category": "Storage",
+      "icon": "azure-blob",
+      "description": "General-purpose v2 storage account with public access disabled.",
+      "terraform_resource": "azurerm_storage_account",
+      "bicep_resource": "Microsoft.Storage/storageAccounts",
+      "family": "object_storage",
+      "required_properties": [
+        "account_replication_type"
+      ],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard_LRS",
+      "allowed_skus": [
+        "Standard_LRS",
+        "Standard_GRS"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "account_tier": "Standard",
+        "account_replication_type": "LRS",
+        "public_access": false,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard_LRS",
+        "tiers": {
+          "Standard_LRS": 28.0,
+          "Standard_GRS": 44.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Standard_LRS"
+        },
+        "qa": {
+          "sku": "Standard_LRS"
+        },
+        "prod": {
+          "sku": "Standard_GRS"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-sql": {
+      "display_name": "Azure SQL",
+      "category": "Database",
+      "icon": "azure-sql",
+      "description": "Managed SQL with TDE, TLS 1.2, and private access defaults.",
+      "terraform_resource": "azurerm_mssql_server",
+      "bicep_resource": "Microsoft.Sql/servers",
+      "family": "sql_database",
+      "required_properties": [
+        "administrator_login"
+      ],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "GP_S_Gen5_2",
+      "allowed_skus": [
+        "Basic",
+        "GP_S_Gen5_2",
+        "GP_S_Gen5_4"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "administrator_login": "sqladmin",
+        "minimum_tls_version": "1.2",
+        "public_access": false,
+        "encryption_at_rest": true,
+        "auditing_enabled": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "GP_S_Gen5_2",
+        "tiers": {
+          "Basic": 18.0,
+          "GP_S_Gen5_2": 185.0,
+          "GP_S_Gen5_4": 365.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Basic"
+        },
+        "qa": {
+          "sku": "GP_S_Gen5_2"
+        },
+        "prod": {
+          "sku": "GP_S_Gen5_4"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-postgres": {
+      "display_name": "Azure Database for PostgreSQL",
+      "category": "Database",
+      "icon": "azure-postgres",
+      "description": "Flexible server with TLS, storage encryption, and private networking.",
+      "terraform_resource": "azurerm_postgresql_flexible_server",
+      "bicep_resource": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "family": "postgres_database",
+      "required_properties": [
+        "administrator_login"
+      ],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "GP_Standard_D2s_v3",
+      "allowed_skus": [
+        "B_Standard_B1ms",
+        "GP_Standard_D2s_v3",
+        "GP_Standard_D4s_v3"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "administrator_login": "pgadmin",
+        "version": "15",
+        "public_access": false,
+        "encryption_at_rest": true,
+        "audit_logging": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "GP_Standard_D2s_v3",
+        "tiers": {
+          "B_Standard_B1ms": 42.0,
+          "GP_Standard_D2s_v3": 160.0,
+          "GP_Standard_D4s_v3": 320.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "B_Standard_B1ms"
+        },
+        "qa": {
+          "sku": "GP_Standard_D2s_v3"
+        },
+        "prod": {
+          "sku": "GP_Standard_D4s_v3"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-keyvault": {
+      "display_name": "Key Vault",
+      "category": "Security",
+      "icon": "azure-keyvault",
+      "description": "Secrets and keys store with purge protection and private access.",
+      "terraform_resource": "azurerm_key_vault",
+      "bicep_resource": "Microsoft.KeyVault/vaults",
+      "family": "key_management",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "standard",
+      "allowed_skus": [
+        "standard",
+        "premium"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "purge_protection_enabled": true,
+        "soft_delete_retention_days": 90,
+        "public_access": false,
+        "encryption_at_rest": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "standard",
+        "tiers": {
+          "standard": 12.0,
+          "premium": 42.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "standard"
+        },
+        "qa": {
+          "sku": "standard"
+        },
+        "prod": {
+          "sku": "premium"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-private-endpoint": {
+      "display_name": "Private Endpoint",
+      "category": "Network",
+      "icon": "azure-private-endpoint",
+      "description": "Private Link endpoint for regulated east-west service access.",
+      "terraform_resource": "azurerm_private_endpoint",
+      "bicep_resource": "Microsoft.Network/privateEndpoints",
+      "family": "private_endpoint",
+      "required_properties": [],
+      "dependencies": [
+        "azure-subnet"
+      ],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "manual_connection": false,
+        "public_access": false,
+        "encryption_in_transit": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 14.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    },
+    "azure-nsg": {
+      "display_name": "Network Security Group",
+      "category": "Security",
+      "icon": "azure-nsg",
+      "description": "Layer-4 network policy enforcement for subnet and NIC traffic.",
+      "terraform_resource": "azurerm_network_security_group",
+      "bicep_resource": "Microsoft.Network/networkSecurityGroups",
+      "family": "security",
+      "required_properties": [],
+      "dependencies": [
+        "azure-subnet"
+      ],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "default_deny": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 8.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    },
+    "azure-firewall": {
+      "display_name": "Azure Firewall",
+      "category": "Security",
+      "icon": "azure-firewall",
+      "description": "Centralized network firewall for egress control, threat intel, and policy enforcement.",
+      "terraform_resource": "azurerm_firewall",
+      "bicep_resource": "Microsoft.Network/azureFirewalls",
+      "family": "security",
+      "required_properties": [],
+      "dependencies": [
+        "azure-vnet"
+      ],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard",
+        "Premium"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "threat_intel_mode": "Alert"
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 350.0,
+          "Premium": 520.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Standard"
+        },
+        "qa": {
+          "sku": "Standard"
+        },
+        "prod": {
+          "sku": "Premium"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-sentinel": {
+      "display_name": "Microsoft Sentinel",
+      "category": "Security",
+      "icon": "azure-sentinel",
+      "description": "SIEM/SOAR security analytics workspace (scaffolded as a solution on Log Analytics).",
+      "terraform_resource": "azurerm_log_analytics_solution",
+      "bicep_resource": "Microsoft.OperationsManagement/solutions",
+      "family": "security",
+      "required_properties": [],
+      "dependencies": [
+        "azure-logs"
+      ],
+      "default_region": "eastus",
+      "default_sku": "PerGB2018",
+      "allowed_skus": [
+        "PerGB2018"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "solution_name": "SecurityInsights"
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "PerGB2018",
+        "tiers": {
+          "PerGB2018": 180.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    },
+    "azure-defender": {
+      "display_name": "Defender for Cloud",
+      "category": "Security",
+      "icon": "azure-defender",
+      "description": "Cloud security posture management and workload protection (pricing scaffold).",
+      "terraform_resource": "azurerm_security_center_subscription_pricing",
+      "bicep_resource": "Microsoft.Security/pricings",
+      "family": "security",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Free",
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "tier": "Standard"
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Free": 0.0,
+          "Standard": 120.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Free"
+        },
+        "qa": {
+          "sku": "Standard"
+        },
+        "prod": {
+          "sku": "Standard"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-logs": {
+      "display_name": "Log Analytics Workspace",
+      "category": "Monitoring",
+      "icon": "azure-logs",
+      "description": "Centralized log ingestion and retention for governance workflows.",
+      "terraform_resource": "azurerm_log_analytics_workspace",
+      "bicep_resource": "Microsoft.OperationalInsights/workspaces",
+      "family": "monitoring",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "PerGB2018",
+      "allowed_skus": [
+        "PerGB2018"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "retention_days": 30
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "PerGB2018",
+        "tiers": {
+          "PerGB2018": 95.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "properties": {
+            "retention_days": 7
+          }
+        },
+        "qa": {
+          "properties": {
+            "retention_days": 30
+          }
+        },
+        "prod": {
+          "properties": {
+            "retention_days": 90
+          }
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-policy": {
+      "display_name": "Azure Policy",
+      "category": "Management",
+      "icon": "azure-policy",
+      "description": "Policy-as-code guardrails for resource configuration and compliance.",
+      "terraform_resource": "azurerm_policy_assignment",
+      "bicep_resource": "Microsoft.Authorization/policyAssignments",
+      "family": "management",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {},
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 0.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    },
+    "azure-rbac": {
+      "display_name": "RBAC Role Assignment",
+      "category": "Identity",
+      "icon": "azure-rbac",
+      "description": "Least-privilege access control via role assignments.",
+      "terraform_resource": "azurerm_role_assignment",
+      "bicep_resource": "Microsoft.Authorization/roleAssignments",
+      "family": "identity",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {},
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 0.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    },
+    "azure-managed-identity": {
+      "display_name": "Managed Identity",
+      "category": "Identity",
+      "icon": "azure-managed-identity",
+      "description": "Passwordless workload identity for Azure resources.",
+      "terraform_resource": "azurerm_user_assigned_identity",
+      "bicep_resource": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "family": "identity",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {},
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 0.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    },
+    "azure-appgw": {
+      "display_name": "Application Gateway (WAF)",
+      "category": "Network",
+      "icon": "azure-appgw",
+      "description": "Layer-7 ingress with WAF policy enforcement.",
+      "terraform_resource": "azurerm_application_gateway",
+      "bicep_resource": "Microsoft.Network/applicationGateways",
+      "family": "network",
+      "required_properties": [],
+      "dependencies": [
+        "azure-vnet"
+      ],
+      "default_region": "eastus",
+      "default_sku": "WAF_v2",
+      "allowed_skus": [
+        "Standard_v2",
+        "WAF_v2"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "waf_enabled": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "WAF_v2",
+        "tiers": {
+          "Standard_v2": 190.0,
+          "WAF_v2": 260.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {
+          "sku": "Standard_v2"
+        },
+        "qa": {
+          "sku": "WAF_v2"
+        },
+        "prod": {
+          "sku": "WAF_v2"
+        }
+      },
+      "connection_hints": []
+    },
+    "azure-backup": {
+      "display_name": "Recovery Services Vault",
+      "category": "Management",
+      "icon": "azure-backup",
+      "description": "Backup and retention vault for regulated workloads.",
+      "terraform_resource": "azurerm_recovery_services_vault",
+      "bicep_resource": "Microsoft.RecoveryServices/vaults",
+      "family": "management",
+      "required_properties": [],
+      "dependencies": [],
+      "default_region": "eastus",
+      "default_sku": "Standard",
+      "allowed_skus": [
+        "Standard"
+      ],
+      "compliance_tags": [
+        "HIPAA",
+        "GDPR",
+        "SOC2"
+      ],
+      "default_properties": {
+        "soft_delete": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "default_tier": "Standard",
+        "tiers": {
+          "Standard": 22.0
+        }
+      },
+      "environment_overrides": {
+        "dev": {},
+        "qa": {},
+        "prod": {}
+      },
+      "connection_hints": []
+    }
+  }
+}

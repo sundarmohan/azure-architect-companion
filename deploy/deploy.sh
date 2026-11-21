@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Azure Architect Companion - EC2 Deployment Script
+# MonitorAI V2.2 - EC2 Deployment Script
 # This script pulls the latest Docker image and deploys using docker-compose
 
 set -e  # Exit on any error
@@ -19,7 +19,7 @@ IMAGE_NAME="azure-architect-companion"
 MAX_RETRIES=30
 RETRY_INTERVAL=4
 
-echo -e "${YELLOW}=== Azure Architect Companion Deployment ===${NC}"
+echo -e "${YELLOW}=== MonitorAI V2.2 Deployment ===${NC}"
 echo "Image Tag: $IMAGE_TAG"
 echo "Deployment Directory: $DEPLOYMENT_DIR"
 echo ""
@@ -47,6 +47,14 @@ if [ ! -f "$DEPLOYMENT_DIR/.env" ]; then
     echo -e "${YELLOW}Warning: .env not found in $DEPLOYMENT_DIR; using docker-compose defaults${NC}"
     touch "$DEPLOYMENT_DIR/.env"
 fi
+
+# The database password is required. If the server's .env has none yet, generate a
+# random one once and persist it there (owner-only). It is never printed.
+if ! grep -qE '^POSTGRES_PASSWORD=.+' "$DEPLOYMENT_DIR/.env"; then
+    echo -e "${YELLOW}POSTGRES_PASSWORD not set in .env; generating one${NC}"
+    printf '\nPOSTGRES_PASSWORD=%s\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$DEPLOYMENT_DIR/.env"
+fi
+chmod 600 "$DEPLOYMENT_DIR/.env"
 
 cd "$DEPLOYMENT_DIR"
 

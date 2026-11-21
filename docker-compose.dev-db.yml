@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-monitorai}
+      POSTGRES_USER: ${POSTGRES_USER:-monitorai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monitorai_dev}
+    ports:
+      - "${DEV_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitorai -d monitorai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  postgres_dev_data:
