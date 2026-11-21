@@ -46,8 +46,10 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
   Provider responses are mocked in CI. Live Azure collection remains unverified.
 - [x] Phase 4: Azure cybersecurity posture, threat signals, and finding tracking.
   [GitHub Actions verified the Phase 4 code at `c6e57d1`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44941135258).
-  CI uses mocked Azure responses. The EC2 preview still runs the Phase 3 release.
-- [ ] Phase 5: authorized assessment records, finding imports, and retest tracking.
+  CI uses mocked Azure responses.
+- [x] Phase 5: authorized assessment records, finding imports, and retest tracking.
+  [GitHub Actions verified the Phase 5 code at `791bf29`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44943078778).
+  The private EC2 preview was upgraded after a preview database backup.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
 GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
@@ -87,10 +89,11 @@ Missing Azure permissions and unsupported sources are identified separately.
 
 ## Interim EC2 preview
 
-The isolated Phase 3 preview uses commit `d4be64e` as its application source
-and leaves the legacy service on the same EC2 host running. The preview
-binds to EC2 loopback port 8002 and uses its own PostgreSQL volume.
-[Deployment and smoke checks](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44933300795)
+The isolated preview runs Phase 5 application source `791bf29` using image
+tag `preview-5ee4f5a1ca29cb5c69a14a19cb52de55c092959c`. The upgrade reused
+the preview PostgreSQL volume after creating and checking a backup archive.
+The preview binds to EC2 loopback port 8002 alongside the legacy service.
+[Current deployment and smoke checks](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44943178221)
 
 Open an SSH tunnel using the existing EC2 SSH credentials:
 
