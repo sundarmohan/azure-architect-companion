@@ -36,7 +36,11 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 - [x] Phase 1: local identity, revocable sessions, RBAC, audit events, client
   isolation, protected Azure architecture designs, and encrypted Azure credentials.
   [GitHub Actions verified the Phase 1 code at `f0648ba`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44926569041).
-- [ ] Phase 2: client-scoped Azure discovery, inventory, and architecture workflows.
+- [x] Phase 2: client-scoped Azure discovery and inventory, architecture
+  lifecycle and revisions, design validation and cost estimates, and reviewable exports.
+  [GitHub Actions verified the Phase 2 code at `8854402`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44927878566).
+  Azure inventory tests use mocked Azure responses. Live Azure access and
+  applying exported artifacts are outside this verification.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
 The Azure connection test uses a mocked provider response in CI. Required
