@@ -72,6 +72,24 @@ The UI identifies deliberately retained earlier data after a failed collection.
 Client credentials and subscriptions determine collection scope. All provider
 calls are read-only.
 
+### Advanced Diagnostics
+
+Editors and administrators can query hourly log counts for an inventoried
+resource and a 1, 6, 24, or 72-hour window. Sources include exported Azure
+Activity, AzureDiagnostics, App Service HTTP logs, Application Insights
+exceptions, and Linux Syslog or Windows Event logs sent to Azure Monitor.
+Select the Application Insights resource for application exceptions. A
+customer administrator must configure diagnostic routing or the Azure Monitor
+Agent and grant resource-context log read permissions beforehand. An empty
+result may reflect ingestion delay, an unconfigured source, or filtered access.
+MonitorAI stores an audit event, while log query results are displayed on demand.
+
+Azure CLI and PowerShell can query the same data independently using Azure
+operator credentials. MonitorAI sends fixed KQL through the resource-scoped
+Logs API. Existing host and App Service diagnostics can be routed into Azure
+Monitor by customer operators. See the
+[resource-context API documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/api/azure-resource-queries).
+
 ## Phase 2 Azure and design workflows
 
 A client administrator configures one Azure tenant and service principal, a

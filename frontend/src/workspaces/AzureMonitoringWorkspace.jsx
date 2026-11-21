@@ -6,6 +6,7 @@ import {
   updateAzureMonitoringSchedule,
 } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
+import AzureDiagnostics from "./AzureDiagnostics";
 
 const NUMBER_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
 
@@ -143,12 +144,23 @@ function MonitoringSchedule({ subscription }) {
 }
 
 export default function AzureMonitoringWorkspace({ canRefresh, canManageSchedule }) {
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
   return <AzureSnapshotWorkspace title="Infrastructure Monitoring"
     description="Review Azure availability and recent metrics for resources in the selected subscription."
     canRefresh={canRefresh} loadSnapshot={getAzureMonitoring} refreshSnapshot={refreshAzureMonitoring}>
     {(snapshot, subscription) => <>
       {canManageSchedule && <MonitoringSchedule subscription={subscription} />}
       {snapshot && <MonitoringResources snapshot={snapshot} />}
+      {canRefresh && <>
+        <div className="actions">
+          <button type="button" aria-expanded={showDiagnostics}
+            onClick={() => setShowDiagnostics((visible) => !visible)}>
+            {showDiagnostics ? "Hide advanced diagnostics" : "Open advanced diagnostics"}
+          </button>
+        </div>
+        {showDiagnostics && <AzureDiagnostics subscription={subscription} />}
+      </>}
     </>}
   </AzureSnapshotWorkspace>;
 }

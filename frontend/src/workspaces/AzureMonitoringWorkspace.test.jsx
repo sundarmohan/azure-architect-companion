@@ -3,17 +3,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AzureMonitoringWorkspace from "./AzureMonitoringWorkspace";
 import {
   getAzureConnectionStatus,
+  getAzureInventory,
   getAzureMonitoring,
   getAzureMonitoringSchedule,
+  queryAzureDiagnostics,
   refreshAzureMonitoring,
   updateAzureMonitoringSchedule,
 } from "../services/api";
 
 vi.mock("../services/api", () => ({
   getAzureConnectionStatus: vi.fn(),
+  getAzureInventory: vi.fn(),
   getAzureMonitoring: vi.fn(),
   refreshAzureMonitoring: vi.fn(),
   getAzureMonitoringSchedule: vi.fn(),
+  queryAzureDiagnostics: vi.fn(),
   updateAzureMonitoringSchedule: vi.fn(),
 }));
 
@@ -85,6 +89,7 @@ describe("Azure monitoring workspace", () => {
     expect(await screen.findByText(/Refresh Azure Inventory for this subscription/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Refresh snapshot" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Collection schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open advanced diagnostics" })).not.toBeInTheDocument();
     expect(getAzureMonitoringSchedule).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Reload saved snapshot" }));
     await waitFor(() => expect(getAzureMonitoring).toHaveBeenCalledTimes(2));
@@ -103,5 +108,31 @@ describe("Azure monitoring workspace", () => {
 
     expect(await screen.findByText("Schedule saved.")).toBeInTheDocument();
     expect(updateAzureMonitoringSchedule).toHaveBeenCalledWith(SUBSCRIPTIONS[0], { enabled: true, interval_minutes: 30 });
+  });
+
+  it("queries bounded aggregates for an inventory resource as an operator", async () => {
+    getAzureMonitoring.mockResolvedValue(snapshot("vm-a"));
+    getAzureInventory.mockResolvedValue({
+      resources: [{ id: "/azure-resource-a", name: "VM A", type: "Microsoft.Compute/virtualMachines", resource_group: "ops" }],
+    });
+    queryAzureDiagnostics.mockResolvedValue({
+      status: "partial_failure",
+      source: "guest",
+      hours: 6,
+      rows: [{ timestamp: "2026-11-01T00:00:00Z", category: "Linux syslog", count: 3 }],
+    });
+    render(<AzureMonitoringWorkspace canRefresh />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open advanced diagnostics" }));
+    fireEvent.change(await screen.findByLabelText("Diagnostic resource"), { target: { value: "/azure-resource-a" } });
+    fireEvent.change(screen.getByLabelText("Log source"), { target: { value: "guest" } });
+    fireEvent.change(screen.getByLabelText("Time range"), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+
+    expect(await screen.findByText(/Counts may be partial/)).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Linux syslog" })).toBeInTheDocument();
+    expect(getAzureInventory).toHaveBeenCalledWith(SUBSCRIPTIONS[0]);
+    expect(queryAzureDiagnostics).toHaveBeenCalledWith(SUBSCRIPTIONS[0], {
+      resource_id: "/azure-resource-a", source: "guest", hours: 6,
+    });
   });
 });

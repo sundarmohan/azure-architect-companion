@@ -148,6 +148,9 @@ export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQ
 export const refreshAzureInventory=id=>request(`/azure/inventory/refresh${subscriptionQuery(id)}`,{method:"POST"});
 export const getAzureMonitoring=id=>fetchRequest(`/azure/monitoring${subscriptionQuery(id)}`);
 export const refreshAzureMonitoring=id=>request(`/azure/monitoring/refresh${subscriptionQuery(id)}`,{method:"POST"});
+export const queryAzureDiagnostics=(id,data)=>fetchRequest(`/azure/diagnostics/query${subscriptionQuery(id)}`,{
+ method:"POST",body:JSON.stringify(data),
+});
 export const getAzureMonitoringSchedule=id=>fetchRequest(`/azure/monitoring/schedule${subscriptionQuery(id)}`);
 export const updateAzureMonitoringSchedule=(id,data)=>request(`/azure/monitoring/schedule${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
 export const getAzureNetwork=id=>fetchRequest(`/azure/network${subscriptionQuery(id)}`);

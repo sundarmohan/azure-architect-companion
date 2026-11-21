@@ -247,6 +247,12 @@ Phase 3 delivery and verification:
   all observations and schedules scoped to that client and subscription.
 - Azure Monitor counters provide aggregate traffic evidence. Flow-level traffic
   attribution and effective reachability need separate Azure data sources.
+- Add on-demand Advanced Diagnostics from resource-scoped Azure Monitor
+  Logs using fixed KQL summaries for Azure Activity, resource diagnostics,
+  App Service HTTP, Application Insights exceptions, and guest OS events.
+  Use inventoried resources, bounded time ranges, Azure read permissions,
+  and aggregates. Keep CLI, PowerShell, SSH, and Kudu execution outside
+  the application. Report unavailable or partial sources separately.
 - Verify isolation, permission checks, snapshot retention, scheduling, and
   the frontend build through GitHub Actions.
 
