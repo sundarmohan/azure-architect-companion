@@ -480,11 +480,12 @@ class ComplianceControlResponse(BaseModel):
 
 class ComplianceFindingResponse(BaseModel):
     """Schema for a single compliance control finding."""
-    
-    framework_id: UUID
+
+    # Optional because VALIDATION_BLOCKED results are not tied to a control
+    framework_id: Optional[UUID] = None
     framework_name: str
-    framework_version: str
-    control_id: UUID
+    framework_version: Optional[str] = None
+    control_id: Optional[UUID] = None
     control_code: str
     title: str
     category: str
@@ -505,9 +506,9 @@ class ComplianceFrameworkEvaluationResponse(BaseModel):
     
     architecture_id: UUID
     architecture_version_id: UUID
-    framework_id: UUID
+    framework_id: Optional[UUID] = None
     framework_name: str
-    framework_version: str
+    framework_version: Optional[str] = None
     overall_status: str  # PASSED, FAILED, REVIEW, BLOCKED, VALIDATION_BLOCKED
     total_controls: int
     passed_controls: int

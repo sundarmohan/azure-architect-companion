@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -10,10 +8,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-azure_architect}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Database is only reachable from the host itself, never the public interface
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-azure_architect}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,32 +21,28 @@ services:
     restart: unless-stopped
 
   app:
-    image: sms300/azure-architect-companion:${IMAGE_TAG:-latest}
+    image: ${DOCKER_IMAGE:-sms300/azure-architect-companion}:${IMAGE_TAG:-latest}
     container_name: azure-architect-app
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      # Always connect to the compose postgres service (localhost inside the
+      # container is the app container itself, not the database).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-azure_architect}
       APP_NAME: ${APP_NAME:-Azure Architect Companion}
       DEBUG: ${DEBUG:-False}
     ports:
-      - "8001:8000"
+      - "${APP_PORT:-8001}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 30s
     networks:
       - app-network
     restart: unless-stopped
-    # Wait for database to be ready before running migrations
-    entrypoint: >
-      sh -c "
-      alembic upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000
-      "
 
 volumes:
   postgres_data:

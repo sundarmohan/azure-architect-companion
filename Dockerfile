@@ -1,3 +1,16 @@
+# ---------- Frontend build stage ----------
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /frontend
+
+COPY frontend/package.json ./
+RUN npm install --no-audit --no-fund
+
+COPY frontend/ ./
+ENV VITE_API_BASE_URL=/api
+RUN npm run build
+
+# ---------- Backend runtime ----------
 # Use Python 3.11 slim image as base
 FROM python:3.11-slim
 
@@ -27,6 +40,9 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini .
 
+# Copy the built frontend; FastAPI serves it from /app/static
+COPY --from=frontend-build /frontend/dist ./static
+
 # Create a non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
@@ -35,8 +51,8 @@ USER appuser
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import http.client; conn = http.client.HTTPConnection('localhost:8000'); conn.request('GET', '/health'); exit(0 if conn.getresponse().status == 200 else 1)" || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
 
-# Start Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations, then start Uvicorn
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

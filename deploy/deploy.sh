@@ -16,8 +16,8 @@ DEPLOYMENT_DIR="${DEPLOYMENT_DIR:-.}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 DOCKER_REGISTRY="sms300"
 IMAGE_NAME="azure-architect-companion"
-MAX_RETRIES=5
-RETRY_INTERVAL=2
+MAX_RETRIES=30
+RETRY_INTERVAL=4
 
 echo -e "${YELLOW}=== Azure Architect Companion Deployment ===${NC}"
 echo "Image Tag: $IMAGE_TAG"
@@ -42,11 +42,10 @@ if [ ! -f "$DEPLOYMENT_DIR/docker-compose.yml" ]; then
     exit 1
 fi
 
-# Check if .env exists
+# .env is optional: docker-compose.yml provides defaults for every variable
 if [ ! -f "$DEPLOYMENT_DIR/.env" ]; then
-    echo -e "${RED}Error: .env file not found in $DEPLOYMENT_DIR${NC}"
-    echo "Please create .env file with required environment variables"
-    exit 1
+    echo -e "${YELLOW}Warning: .env not found in $DEPLOYMENT_DIR; using docker-compose defaults${NC}"
+    touch "$DEPLOYMENT_DIR/.env"
 fi
 
 cd "$DEPLOYMENT_DIR"

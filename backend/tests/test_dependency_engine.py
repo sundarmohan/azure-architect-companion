@@ -255,13 +255,22 @@ class TestDependencyEngineBasics:
                 "parent_resource_id": None,
             })(),
         )
-        
+
+        # Dependencies are satisfied only through an explicit relationship
+        from app.services import RelationshipService
+        RelationshipService.create(db, sample_architecture["version"].id, type("RelationshipCreate", (), {
+            "source_resource_id": vnet.id,
+            "target_resource_id": rg.id,
+            "relationship_type": "contained_in",
+            "metadata": None,
+        })())
+
         analysis = DependencyEngine.analyze_version(
             db,
             sample_architecture["architecture"].id,
             sample_architecture["version"].id,
         )
-        
+
         # VNet has 1 required dependency (RG) that is satisfied
         assert analysis["total_findings"] == 1
         assert analysis["required_findings"] == 1
@@ -536,8 +545,9 @@ class TestDependencyEngineBasics:
             sample_architecture["version"].id,
         )
         
-        # Unknown types don't generate findings
-        assert analysis["total_findings"] == 0
+        # Unknown types are reported explicitly rather than silently ignored
+        assert analysis["total_findings"] == 1
+        assert analysis["findings"][0]["status"] == "CATALOG_RESOURCE_TYPE_UNKNOWN"
 
     def test_multiple_dependencies_one_resource(self, db: Session, sample_catalog, sample_architecture):
         """Test 9: Multiple dependencies on one resource."""
@@ -1189,13 +1199,21 @@ class TestDependencyEngineSameLevelIsolation:
                 "parent_resource_id": None,
             })(),
         )
-        
+
+        from app.services import RelationshipService
+        RelationshipService.create(db, sample_architecture["version"].id, type("RelationshipCreate", (), {
+            "source_resource_id": vnet.id,
+            "target_resource_id": rg.id,
+            "relationship_type": "contained_in",
+            "metadata": None,
+        })())
+
         analysis = DependencyEngine.analyze_version(
             db,
             sample_architecture["architecture"].id,
             sample_architecture["version"].id,
         )
-        
+
         # Dependencies should resolve within same version
         assert analysis["total_findings"] == 1
         assert analysis["findings"][0]["status"] == "SATISFIED"
@@ -1368,7 +1386,7 @@ class TestDependencyEngineEdgeCases:
         assert analysis["satisfied_count"] == 0
         assert analysis["missing_count"] == 0
 
-    def test_architecture_only_no_dependencies(self, db: Session, sample_architecture):
+    def test_architecture_only_no_dependencies(self, db: Session, sample_catalog, sample_architecture):
         """Test 22: Architecture containing only resources with no dependencies."""
         # Create only Resource Groups (which have no dependencies)
         for i in range(3):
@@ -1453,7 +1471,7 @@ class TestDependencyEngineAPI:
         version_id = version_resp.json()["id"]
         
         # Call dependency analysis endpoint
-        resp = client.get(f"/architectures/{arch_id}/versions/{version_id}/dependencies")
+        resp = client.get(f"/architectures/{arch_id}/versions/{version_id}/dependency-analysis")
         
         assert resp.status_code == 200
         data = resp.json()
@@ -1466,7 +1484,7 @@ class TestDependencyEngineAPI:
         unknown_id = "00000000-0000-0000-0000-000000000000"
         version_id = "00000000-0000-0000-0000-000000000001"
         
-        resp = client.get(f"/architectures/{unknown_id}/versions/{version_id}/dependencies")
+        resp = client.get(f"/architectures/{unknown_id}/versions/{version_id}/dependency-analysis")
         
         assert resp.status_code == 404
 
@@ -1479,6 +1497,6 @@ class TestDependencyEngineAPI:
         
         # Try with unknown version
         unknown_version = "00000000-0000-0000-0000-000000000001"
-        resp = client.get(f"/architectures/{arch_id}/versions/{unknown_version}/dependencies")
+        resp = client.get(f"/architectures/{arch_id}/versions/{unknown_version}/dependency-analysis")
         
         assert resp.status_code == 404

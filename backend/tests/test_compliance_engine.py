@@ -38,6 +38,7 @@ from app.services import (
     ComplianceEngine,
     ValidationEngine,
     DependencyEngine,
+    CatalogService,
 )
 from app.schemas import (
     ArchitectureCreate,
@@ -50,6 +51,21 @@ from app.schemas import (
 def db_session(database_session):
     """Provide a database session for tests."""
     return database_session
+
+
+@pytest.fixture(autouse=True)
+def compliance_catalog(db_session: Session):
+    """Register the resource types used here so validation does not block evaluation."""
+    for resource_type in ["ResourceGroup", "StorageAccount", "VirtualMachine", "NetworkSecurityGroup", "Monitor"]:
+        CatalogService.register_resource_type(
+            db_session,
+            provider="azure",
+            resource_type=resource_type,
+            display_name=resource_type,
+            category="test",
+        )
+    for child in ["StorageAccount", "VirtualMachine", "NetworkSecurityGroup", "Monitor"]:
+        CatalogService.add_hierarchy(db_session, "ResourceGroup", child)
 
 
 @pytest.fixture
@@ -576,7 +592,7 @@ class TestVersionIsolation:
         )
         
         result1 = ComplianceEngine.evaluate_compliance(
-            db_session, storage_with_encryption.resource.architecture_version.architecture_id,
+            db_session, storage_with_encryption.architecture_version.architecture_id,
             storage_with_encryption.architecture_version_id, ["HIPAA"]
         )
         result2 = ComplianceEngine.evaluate_compliance(

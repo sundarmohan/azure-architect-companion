@@ -153,6 +153,16 @@ class ArchitectureVersioningService:
         )
         for active in active_versions:
             active.status = ArchitectureVersionStatus.SUPERSEDED.value
+        # Flush the supersede first so the partial unique index on ACTIVE
+        # versions (migration 004) never sees two ACTIVE rows mid-flush.
+        try:
+            db.flush()
+        except IntegrityError as error:
+            db.rollback()
+            raise ArchitectureVersioningError(
+                "VERSION_ACTIVATION_CONFLICT",
+                "Another architecture version was activated concurrently",
+            ) from error
 
         version.status = ArchitectureVersionStatus.ACTIVE.value
         version.snapshot_hash = snapshot_hash

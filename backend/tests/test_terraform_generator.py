@@ -352,7 +352,7 @@ class TestValidationAndCatalogFailures:
 
         assert result["status"] == "BLOCKED"
         assert any(
-            item["code"] == "CATALOG_RESOURCE_TYPE_UNKNOWN"
+            item["code"] == "RESOURCE_TYPE_NOT_IN_CATALOG"
             for item in result["validation_findings"]
         )
         assert len(result["resources_unsupported"]) == 1

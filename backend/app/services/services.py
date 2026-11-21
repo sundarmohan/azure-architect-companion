@@ -111,10 +111,10 @@ class ArchitectureVersionService:
             ArchitectureVersioningService,
         )
 
-        ArchitectureVersioningService.assert_safe_metadata(version.metadata)
-        ArchitectureVersioningService.assert_safe_description(
-            version.change_description
-        )
+        metadata = getattr(version, "metadata", None)
+        change_description = getattr(version, "change_description", None)
+        ArchitectureVersioningService.assert_safe_metadata(metadata)
+        ArchitectureVersioningService.assert_safe_description(change_description)
         if version.status not in {"draft", "DRAFT"}:
             raise ArchitectureVersioningError(
                 "INVALID_VERSION_STATUS",
@@ -133,8 +133,8 @@ class ArchitectureVersionService:
             version_number=version.version_number,
             status=version.status,
             version_sequence=sequence,
-            change_description=version.change_description,
-            version_metadata=version.metadata,
+            change_description=change_description,
+            version_metadata=metadata,
             created_by=version.created_by,
         )
         db.add(db_version)
@@ -1194,14 +1194,13 @@ class ValidationEngine:
                     "related_resource_id": None,
                     "details": {"resource_key": resource.resource_key},
                 })
-                continue
-            
+
             # Check if resource_type is in catalog
             catalog_entry = db.query(ResourceCatalog).filter(
                 ResourceCatalog.resource_type == resource.resource_type
             ).first()
-            
-            if not catalog_entry:
+
+            if resource.resource_type and resource.resource_type.strip() and not catalog_entry:
                 findings.append({
                     "architecture_id": architecture_id,
                     "architecture_version_id": version_id,
@@ -2298,7 +2297,7 @@ class ComplianceEngine:
             "resource_id": secrets_resources[0].id if secrets_resources else None,
             "related_resource_id": None,
             "evidence": {
-                "secrets_service_count": len(secrets_resources),
+                "vault_service_count": len(secrets_resources),
                 "services": [r.resource_type for r in secrets_resources],
             },
             "rule_version": control.rule_version,

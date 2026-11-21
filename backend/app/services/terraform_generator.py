@@ -548,7 +548,7 @@ class TerraformGenerator:
         for key in sorted(value):
             child_path = path + (str(key),)
             if cls._is_secret_key(str(key)):
-                path_label = cls.sanitize_identifier("_".join(child_path))
+                path_label = cls._terraform_attribute_name("_".join(child_path))
                 variables[(resource_id, child_path)] = f"{label}_{path_label}"
             else:
                 cls._walk_secret_values(

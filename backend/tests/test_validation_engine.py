@@ -249,15 +249,15 @@ class TestValidationEngineBasics:
             name="VM 2",
             location="eastus",
         )
-        db.add_all([vm1, vm2])
-        db.commit()
-        
-        result = ValidationEngine.validate_version(
-            db, architecture_version.architecture_id, architecture_version.id
+        # The database enforces uq_version_resource_key (migration 004), so
+        # duplicates cannot be persisted; exercise the validator directly.
+        findings = ValidationEngine._validate_resources(
+            db, architecture_version.architecture_id, architecture_version.id, [vm1, vm2]
         )
-        
-        assert result["status"] == "INVALID"
-        assert any(f["code"] == "DUPLICATE_RESOURCE_KEY" for f in result["findings"])
+
+        duplicate = [f for f in findings if f["code"] == "DUPLICATE_RESOURCE_KEY"]
+        assert len(duplicate) == 1
+        assert duplicate[0]["severity"] == "ERROR"
     
     def test_empty_resource_type_error(self, db: Session, architecture_version):
         """Test: Empty resource type generates ERROR."""
