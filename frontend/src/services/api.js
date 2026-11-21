@@ -161,6 +161,16 @@ export const updateAzureFindingTracking=(subscription,id,data)=>request(
  `/azure/security/findings/${encodeURIComponent(id)}/tracking${subscriptionQuery(subscription)}`,
  {method:"PUT",body:JSON.stringify(data)},
 );
+export const listAssessments=()=>fetchRequest("/assessments");
+export const createAssessment=data=>request("/assessments",{method:"POST",body:JSON.stringify(data)});
+export const getAssessment=id=>fetchRequest(`/assessments/${encodeURIComponent(id)}`);
+export const importAssessmentFindings=(id,data)=>request(`/assessments/${encodeURIComponent(id)}/findings/import`,{
+ method:"POST",body:JSON.stringify(data),
+});
+export const updateAssessmentFinding=(id,findingId,data)=>request(
+ `/assessments/${encodeURIComponent(id)}/findings/${encodeURIComponent(findingId)}`,
+ {method:"PUT",body:JSON.stringify(data)},
+);
 export const discoverAzureResources=(id,data)=>request(`/architectures/${id}/discover-resources`,{method:"POST",body:JSON.stringify(data)});
 export const getResourceMonitoring=(aid,rid,data={})=>request(`/architectures/${aid}/resources/${rid}/monitoring`,{method:"POST",body:JSON.stringify(data)});
 export const getArchitectureMonitoringSummary=(aid,data={})=>request(`/architectures/${aid}/monitoring-summary`,{method:"POST",body:JSON.stringify(data)});
