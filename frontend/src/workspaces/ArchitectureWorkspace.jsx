@@ -40,7 +40,7 @@ function ArchitectureFormModal({ title, initialValue, onSubmit, onClose, isSubmi
   );
 }
 
-export default function ArchitectureWorkspace() {
+export default function ArchitectureWorkspace({ phaseOne = false, canEdit = true }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [inventoryLoading, setInventoryLoading] = useState(true);
@@ -61,7 +61,7 @@ export default function ArchitectureWorkspace() {
         .then(setItems)
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false)),
-      listAzureSubscriptionInventory()
+      !phaseOne && listAzureSubscriptionInventory()
         .then(setSubscriptionInventory)
         .catch((e) => setError(e.message))
         .finally(() => setInventoryLoading(false)),
@@ -119,11 +119,11 @@ export default function ArchitectureWorkspace() {
           <div>
             <div className="workspace-eyebrow">Architecture</div>
             <h1>Architecture Studio</h1>
-            <p>Design, organize and persist architecture layouts with hierarchy and discovery.</p>
+            <p>{phaseOne ? "View or design client architecture layouts." : "Design, organize and persist architecture layouts with hierarchy and discovery."}</p>
           </div>
         </div>
         <div className="designer-host">
-          <Designer architecture={active} onBack={() => { setActive(null); load(); }} />
+          <Designer architecture={active} phaseOne={phaseOne} canEdit={canEdit} onBack={() => { setActive(null); load(); }} />
         </div>
       </section>
     );
@@ -142,11 +142,11 @@ export default function ArchitectureWorkspace() {
       {error && <div className="error">{error}</div>}
 
       <section className="card">
-        <div className="card-title"><h2>Architecture Designs</h2><div className="actions"><span>{items.length}</span><button onClick={() => setCreateOpen(true)}>+ New Architecture</button></div></div>
+        <div className="card-title"><h2>Architecture Designs</h2><div className="actions"><span>{items.length}</span>{canEdit && <button onClick={() => setCreateOpen(true)}>+ New Architecture</button>}</div></div>
         {loading && items.length === 0 ? (
           <p>Loading...</p>
         ) : items.length === 0 ? (
-          <div className="empty">No architectures yet. Create your first design.</div>
+          <div className="empty">{canEdit ? "No architectures yet. Create your first design." : "No architectures yet."}</div>
         ) : (
           <div className="grid">
             {items.map((a) => (
@@ -156,8 +156,10 @@ export default function ArchitectureWorkspace() {
                 <small>{a.provider || "azure"} • {a.environment || "draft"}</small>
                 <div className="actions">
                   <button onClick={() => setActive(a)}>Open Designer</button>
-                  <button className="dismiss" onClick={() => setRenameTarget(a)}>Rename</button>
-                  <button className="danger" onClick={() => remove(a)}>Delete</button>
+                  {canEdit && <>
+                    <button className="dismiss" onClick={() => setRenameTarget(a)}>Rename</button>
+                    <button className="danger" onClick={() => remove(a)}>Delete</button>
+                  </>}
                 </div>
               </article>
             ))}
@@ -165,7 +167,7 @@ export default function ArchitectureWorkspace() {
         )}
       </section>
 
-      <section className="card">
+      {!phaseOne && <section className="card">
         <div className="card-title"><h2>Azure Subscription Inventory</h2><span>{subscriptionInventory.length}</span></div>
         {inventoryLoading && subscriptionInventory.length === 0 ? (
           <p>Loading...</p>
@@ -208,9 +210,9 @@ export default function ArchitectureWorkspace() {
             </table>
           </div>
         )}
-      </section>
+      </section>}
 
-      {createOpen && (
+      {canEdit && createOpen && (
         <ArchitectureFormModal
           title="New Architecture"
           initialValue=""
@@ -220,7 +222,7 @@ export default function ArchitectureWorkspace() {
         />
       )}
 
-      {renameTarget && (
+      {canEdit && renameTarget && (
         <ArchitectureFormModal
           title="Rename Architecture"
           initialValue={renameTarget.name}

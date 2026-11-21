@@ -1,77 +1,124 @@
-import { useMemo, useState } from "react";
-import PlatformDashboard from "./workspaces/PlatformDashboard";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ArchitectureWorkspace from "./workspaces/ArchitectureWorkspace";
-import MonitoringWorkspace from "./workspaces/MonitoringWorkspace";
-import CostWorkspace from "./workspaces/CostWorkspace";
-import GovernanceWorkspace from "./workspaces/GovernanceWorkspace";
-import IntelligenceWorkspace from "./workspaces/IntelligenceWorkspace";
-import ReportsWorkspace from "./workspaces/ReportsWorkspace";
-import SettingsWorkspace from "./workspaces/SettingsWorkspace";
+import AzureConnectionWorkspace from "./workspaces/AzureConnectionWorkspace";
+import { AccountWorkspace, SignInForm } from "./workspaces/AccountWorkspace";
+import { getCurrentUser, logout, onUnauthorized, setApiSession } from "./services/api";
 import "./styles/app.css";
 import "./styles/platform.css";
-
-const NAV = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "architecture", label: "Architecture Studio" },
-  { id: "monitoring", label: "Monitoring" },
-  { id: "cost", label: "Cost / FinOps" },
-  { id: "governance", label: "Governance / Security / Compliance" },
-  { id: "intelligence", label: "Intelligence / AI" },
-  { id: "reports", label: "Reports" },
-  { id: "settings", label: "Settings" },
-];
+import "./styles/account.css";
 
 export default function App() {
-  const [workspace, setWorkspace] = useState("dashboard");
+  const [user, setUser] = useState(null);
+  const [clientId, setClientId] = useState("");
+  const [workspace, setWorkspace] = useState("architecture");
+  const [checking, setChecking] = useState(true);
+  const [signingOut, setSigningOut] = useState(false);
+  const [notice, setNotice] = useState("");
+  const currentClient = useRef("");
+  const sessionVersion = useRef(0);
 
-  const content = useMemo(() => {
-    if (workspace === "dashboard") {
-      return (
-        <PlatformDashboard
-          onOpenArchitectureStudio={() => setWorkspace("architecture")}
-          onOpenSettings={() => setWorkspace("settings")}
-        />
-      );
+  const selectClient = useCallback((id) => {
+    if (currentClient.current === id) return;
+    currentClient.current = id;
+    setApiSession(id);
+    setClientId(id);
+  }, []);
+
+  const endSession = useCallback((message = "") => {
+    sessionVersion.current += 1;
+    currentClient.current = "";
+    setApiSession();
+    setClientId("");
+    setUser(null);
+    setWorkspace("architecture");
+    setNotice(message);
+  }, []);
+
+  const refreshUser = useCallback(async (preferredClient) => {
+    const version = sessionVersion.current;
+    const account = await getCurrentUser();
+    if (version !== sessionVersion.current) return;
+    const preferred = preferredClient || currentClient.current;
+    const client = account.memberships.find((item) => item.client_id === preferred) || account.memberships[0];
+    selectClient(client?.client_id || "");
+    setUser(account);
+  }, [selectClient]);
+
+  const checkSession = useCallback(async () => {
+    setChecking(true);
+    setNotice("");
+    try {
+      await refreshUser();
+    } catch (error) {
+      endSession(error.status === 401 ? "" : error.message);
+    } finally {
+      setChecking(false);
     }
-    if (workspace === "architecture") {
-      return <ArchitectureWorkspace />;
+  }, [endSession, refreshUser]);
+
+  useEffect(() => {
+    const unsubscribe = onUnauthorized(() => endSession("Your session ended. Sign in again."));
+    void checkSession();
+    return unsubscribe;
+  }, [checkSession, endSession]);
+
+  async function signOut() {
+    setSigningOut(true);
+    setNotice("");
+    try {
+      await logout();
+      endSession();
+    } catch (error) {
+      if (error.status !== 401) setNotice(error.message);
+    } finally {
+      setSigningOut(false);
     }
-    if (workspace === "monitoring") {
-      return <MonitoringWorkspace />;
-    }
-    if (workspace === "cost") {
-      return <CostWorkspace />;
-    }
-    if (workspace === "governance") {
-      return <GovernanceWorkspace />;
-    }
-    if (workspace === "intelligence") {
-      return <IntelligenceWorkspace />;
-    }
-    if (workspace === "settings") {
-      return <SettingsWorkspace />;
-    }
-    return <ReportsWorkspace />;
-  }, [workspace]);
+  }
+
+  if (checking) return <main className="account-screen" role="status">Checking your session…</main>;
+  if (!user) return <SignInForm notice={notice} onSignIn={async () => {
+    await refreshUser();
+    setNotice("");
+  }} />;
+
+  const activeClient = user.memberships.find((item) => item.client_id === clientId);
+  const canEdit = activeClient?.role === "admin" || activeClient?.role === "editor";
 
   return (
     <div className="app-shell">
       <aside className="app-nav">
         <div className="brand">MONITORAI PLATFORM</div>
         <nav className="nav-list" aria-label="Workspace navigation">
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${workspace === item.id ? "active" : ""}`}
-              onClick={() => setWorkspace(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
+          {activeClient && <>
+            <button className={`nav-item ${workspace === "architecture" ? "active" : ""}`} onClick={() => setWorkspace("architecture")}>Architecture Studio</button>
+            <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
+          </>}
+          <button className={`nav-item ${workspace === "account" ? "active" : ""}`} onClick={() => setWorkspace("account")}>Account</button>
         </nav>
+        <div className="session-controls">
+          {activeClient && <label>
+            Client
+            <select value={clientId} onChange={(event) => selectClient(event.target.value)}>
+              {user.memberships.map((item) => (
+                <option key={item.client_id} value={item.client_id}>{item.client_name}</option>
+              ))}
+            </select>
+          </label>}
+          <button onClick={signOut} disabled={signingOut}>Sign out</button>
+        </div>
       </aside>
 
-      <main className="app-main">{content}</main>
+      <main className="app-main" key={clientId}>
+        {notice && <div className="error" role="alert">{notice}</div>}
+        {workspace === "account" || !activeClient ? (
+          <AccountWorkspace user={user} client={activeClient} onMembershipChange={refreshUser}
+            onPasswordChanged={() => endSession("Password changed. Sign in with your new password.")} />
+        ) : workspace === "azure" ? (
+          <AzureConnectionWorkspace canManage={activeClient.role === "admin"} />
+        ) : (
+          <ArchitectureWorkspace phaseOne canEdit={canEdit} />
+        )}
+      </main>
     </div>
   );
 }

@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import SessionLocal
+from app.domains.access.routes import get_db
 from app.domains.architecture.models import Architecture, ArchitectureResource, ArchitectureRelationship, AzureSubscription, AzureResourceGroup, ArchitectureDependency
 from app.domains.architecture.catalog import (
     AZURE_RESOURCE_CATALOG,
@@ -62,13 +62,10 @@ DEFAULT_DEPENDENCIES = {
     for item in AZURE_RESOURCE_CATALOG
 }
 
-async def get_db():
-    async with SessionLocal() as session:
-        yield session
-
-
 async def get_architecture_or_404(db: AsyncSession, architecture_id: UUID) -> Architecture:
-    architecture = await db.get(Architecture, architecture_id)
+    architecture = await db.scalar(select(Architecture).where(
+        Architecture.id == architecture_id, Architecture.client_id == db.info["client_id"]
+    ))
     if not architecture:
         raise HTTPException(status_code=404, detail="Architecture not found")
     return architecture
@@ -81,11 +78,11 @@ async def validate_subscription_ownership(
 ) -> None:
     if subscription_id is None:
         return
-    subscription = await db.get(AzureSubscription, subscription_id)
+    subscription = await db.scalar(select(AzureSubscription).where(
+        AzureSubscription.id == subscription_id, AzureSubscription.architecture_id == architecture_id
+    ))
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    if subscription.architecture_id != architecture_id:
-        raise HTTPException(status_code=400, detail="Subscription must belong to the architecture")
 
 
 async def validate_resource_group_ownership(
@@ -95,11 +92,11 @@ async def validate_resource_group_ownership(
 ) -> None:
     if resource_group_id is None:
         return
-    group = await db.get(AzureResourceGroup, resource_group_id)
+    group = await db.scalar(select(AzureResourceGroup).where(
+        AzureResourceGroup.id == resource_group_id, AzureResourceGroup.architecture_id == architecture_id
+    ))
     if not group:
         raise HTTPException(status_code=404, detail="Resource group not found")
-    if group.architecture_id != architecture_id:
-        raise HTTPException(status_code=400, detail="Resource group must belong to the architecture")
 
 
 async def ensure_default_dependencies(db: AsyncSession, architecture_id: UUID) -> None:
@@ -109,7 +106,6 @@ async def ensure_default_dependencies(db: AsyncSession, architecture_id: UUID) -
     )
     existing_pairs = set(existing_rows.all())
 
-    changed = False
     for resource_type, dependency_types in DEFAULT_DEPENDENCIES.items():
         for dependency_type in dependency_types:
             key = (resource_type, dependency_type)
@@ -126,9 +122,6 @@ async def ensure_default_dependencies(db: AsyncSession, architecture_id: UUID) -
                     properties={},
                 )
             )
-            changed = True
-    if changed:
-        await db.commit()
 
 
 def resolve_requested_subscription(
@@ -232,16 +225,19 @@ def validate_relationship_rule(source_type: str, target_type: str, relationship_
 
 @router.get("", response_model=list[ArchitectureRead])
 async def list_architectures(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Architecture).order_by(Architecture.created_at.desc()))
+    result = await db.execute(select(Architecture).where(Architecture.client_id == db.info["client_id"]).order_by(Architecture.created_at.desc()))
     return list(result.scalars().all())
 
 @router.post("", response_model=ArchitectureRead, status_code=201)
 async def create_architecture(payload: ArchitectureCreate, db: AsyncSession = Depends(get_db)):
-    item = Architecture(**payload.model_dump())
+    if payload.provider != "azure":
+        raise HTTPException(422, "Only Azure architectures are supported")
+    item = Architecture(client_id=db.info["client_id"], **payload.model_dump())
     db.add(item)
+    await db.flush()
+    await ensure_default_dependencies(db, item.id)
     await db.commit()
     await db.refresh(item)
-    await ensure_default_dependencies(db, item.id)
     return item
 
 @router.get("/{architecture_id}", response_model=ArchitectureRead)
@@ -251,7 +247,11 @@ async def get_architecture(architecture_id: UUID, db: AsyncSession = Depends(get
 @router.put("/{architecture_id}", response_model=ArchitectureRead)
 async def update_architecture(architecture_id: UUID, payload: ArchitectureUpdate, db: AsyncSession = Depends(get_db)):
     item = await get_architecture_or_404(db, architecture_id)
-    for key, value in payload.model_dump(exclude_unset=True).items(): setattr(item, key, value)
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("provider", "azure") != "azure":
+        raise HTTPException(422, "Only Azure architectures are supported")
+    for key, value in changes.items():
+        setattr(item, key, value)
     await db.commit(); await db.refresh(item); return item
 
 @router.delete("/{architecture_id}", status_code=204)
@@ -270,11 +270,11 @@ async def create_resource(architecture_id: UUID, payload: ResourceCreate, db: As
     await get_architecture_or_404(db, architecture_id)
     await validate_resource_group_ownership(db, architecture_id, payload.resource_group_id)
     if payload.parent_resource_id is not None:
-        parent = await db.get(ArchitectureResource, payload.parent_resource_id)
+        parent = await db.scalar(select(ArchitectureResource).where(
+            ArchitectureResource.id == payload.parent_resource_id, ArchitectureResource.architecture_id == architecture_id
+        ))
         if not parent:
             raise HTTPException(status_code=404, detail="Parent resource not found")
-        if parent.architecture_id != architecture_id:
-            raise HTTPException(status_code=400, detail="Parent resource must belong to the architecture")
 
     if payload.resource_type not in CATALOG_BY_RESOURCE_TYPE:
         raise HTTPException(status_code=400, detail="Unsupported resource type")
@@ -299,11 +299,11 @@ async def update_resource(architecture_id: UUID, resource_id: UUID, payload: Res
         if parent_resource_id == resource_id:
             raise HTTPException(status_code=400, detail="A resource cannot be its own parent")
         if parent_resource_id is not None:
-            parent = await db.get(ArchitectureResource, parent_resource_id)
+            parent = await db.scalar(select(ArchitectureResource).where(
+                ArchitectureResource.id == parent_resource_id, ArchitectureResource.architecture_id == architecture_id
+            ))
             if not parent:
                 raise HTTPException(status_code=404, detail="Parent resource not found")
-            if parent.architecture_id != architecture_id:
-                raise HTTPException(status_code=400, detail="Parent resource must belong to the architecture")
 
     for key, value in payload_data.items():
         setattr(item, key, value)
@@ -366,10 +366,8 @@ async def validate_relationship(
     await get_architecture_or_404(db, architecture_id)
     source = await db.get(ArchitectureResource, payload.source_resource_id)
     target = await db.get(ArchitectureResource, payload.target_resource_id)
-    if not source or not target:
+    if not source or not target or source.architecture_id != architecture_id or target.architecture_id != architecture_id:
         raise HTTPException(status_code=404, detail="Source or target resource not found")
-    if source.architecture_id != architecture_id or target.architecture_id != architecture_id:
-        raise HTTPException(status_code=400, detail="Both resources must belong to the architecture")
 
     validation = classify_relationship_rule(
         source.resource_type,
@@ -492,7 +490,6 @@ async def delete_resource_group(architecture_id: UUID, resource_group_id: UUID, 
 @router.get("/{architecture_id}/dependencies", response_model=list[DependencyRead])
 async def list_dependencies(architecture_id: UUID, db: AsyncSession = Depends(get_db)):
     await get_architecture_or_404(db, architecture_id)
-    await ensure_default_dependencies(db, architecture_id)
     result = await db.execute(select(ArchitectureDependency).where(ArchitectureDependency.architecture_id == architecture_id))
     return list(result.scalars().all())
 

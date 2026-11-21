@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 from app.domains.cost.schemas import ArchitectureActualCostRead, ArchitectureCostEstimateRead, CostBreakdown
 from app.domains.monitoring.schemas import ArchitectureMonitoringSummaryRead
 

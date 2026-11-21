@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 from app.domains.cost.schemas import ArchitectureActualCostRead, ArchitectureCostEstimateRead, CostBreakdown
 from app.domains.intelligence.providers import IntelligenceContext
 from app.domains.intelligence.service import IntelligenceService

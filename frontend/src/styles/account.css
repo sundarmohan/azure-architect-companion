@@ -1,0 +1,82 @@
+.account-screen {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+}
+
+.account-screen .card {
+  width: min(100%, 420px);
+}
+
+.account-form {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.account-form h1,
+.account-form h2,
+.account-form p,
+.account-form .error {
+  margin: 0;
+}
+
+.account-form fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.account-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.account-form :is(input, select),
+.session-controls select {
+  min-width: 0;
+  padding: 8px 10px;
+  color: #172033;
+  background: #fff;
+  border: 1px solid #cfd8e5;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.account-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 265px), 1fr));
+  align-items: start;
+}
+
+.session-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+  margin-left: auto;
+  color: #fff;
+  font-size: 14px;
+}
+
+.session-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-controls select {
+  max-width: 220px;
+}
+
+@media (max-width: 760px) {
+  .session-controls {
+    margin: 6px 0 0;
+  }
+}

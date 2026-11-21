@@ -30,6 +30,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      MONITORAI_BOOTSTRAP_USERNAME: ${MONITORAI_BOOTSTRAP_USERNAME:-}
+      MONITORAI_BOOTSTRAP_PASSWORD: ${MONITORAI_BOOTSTRAP_PASSWORD:-}
+      MONITORAI_AZURE_ENCRYPTION_KEY: ${MONITORAI_AZURE_ENCRYPTION_KEY:-}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-monitorai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-monitorai}
     ports:
       - "${APP_PORT:-8001}:8000"

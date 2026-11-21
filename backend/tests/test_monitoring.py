@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 from app.domains.architecture.models import Architecture, ArchitectureResource
 from app.domains.monitoring.schemas import ArchitectureMonitoringSummaryRead, ResourceMonitoringRead
 from app.domains.monitoring.service import MonitoringService

@@ -1,4 +1,40 @@
-# Unified Multi-Cloud Infrastructure Management Platform
+# MonitorAI V2.2 product requirements
+
+## Confirmed initial release scope
+
+- Azure is the sole initial cloud provider. The repository root is the product.
+- Use local username/password sign-in, revocable sessions, backend RBAC,
+  auditable operations, and server-enforced isolation between client workspaces.
+- Use the independent V2.2 PostgreSQL database and `monitorai_pg_data` volume.
+- Derive recommendations from deterministic rules, thresholds, correlation,
+  statistics, and explainable risk scores. No external generative AI is required.
+- The application collects, analyzes, alerts, recommends, reports, and exports
+  reviewable Terraform and Ansible artifacts. It never changes live infrastructure,
+  automatically remediates findings, or executes deployments.
+- Keep the existing GitHub repository and EC2 deployment path. Verify changes
+  via GitHub Actions. Develop one phase at a time and release only after
+  application development, approved cleanup, and explicit deployment approval.
+
+## Delivery checklist
+
+- [x] Phase 0: repository and deployment baseline, migration review, and cleanup candidates.
+- [ ] Phase 1: local accounts, client isolation, RBAC, audit, protected
+  architecture design, and one encrypted read-only Azure connection per client.
+  Gate completion on clean PostgreSQL migration, backend and frontend checks in CI.
+  Live discovery, monitoring, governance, reporting, and background collection
+  remain unavailable until their client scope is established.
+- [ ] Phase 2: Azure discovery, topology, inventory, versioned design, validation,
+  cost, and Terraform/Ansible exports.
+- [ ] Phase 3: Azure monitoring, networking, security telemetry, operational
+  intelligence, alerts, RCA, DevSecOps visibility, and recovery evidence.
+- [ ] Phase 4: HIPAA, SOC 2, PCI DSS, and ISO assessment evidence and client reports.
+- [ ] Phase 5: approved cleanup, release hardening, and first approved EC2 deployment.
+
+The following baseline preserves the original feature inventory for reference.
+Where its provider, identity, intelligence, or execution scope differs, use
+the confirmed initial release scope above.
+
+## Original feature inventory
 
 ## Product requirements
 

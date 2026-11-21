@@ -23,12 +23,33 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 
 - **CI/CD:** `.github/workflows/docker-deploy.yml`. Pull requests to `main` run backend
   tests (against a throwaway PostgreSQL service) and frontend tests and build only.
-  Pushes to `main` additionally build one image (`Dockerfile`: Vite build served by
-  FastAPI), push it to GHCR, and deploy to EC2.
+  Pushes to `main` run CI. A manual Actions run on `main` with `deploy: true`
+  builds the FastAPI and Vite image, publishes it to GHCR, and deploys to EC2.
 - **Production stack:** `docker-compose.yml` (app on host port `8001`, PostgreSQL with
   no host port, volume `monitorai_pg_data`). `deploy/deploy.sh` generates
   `POSTGRES_PASSWORD` into the server's `.env` on first deploy if it is missing.
 - Database migrations run automatically in the app's startup hook.
+
+## Phase 1 access setup
+
+Set `MONITORAI_BOOTSTRAP_USERNAME` and `MONITORAI_BOOTSTRAP_PASSWORD` in a
+protected runtime environment before the first start. The password needs at
+least 12 characters. Startup creates the first platform administrator once.
+Remove the bootstrap variables after setup and manage passwords through the
+Account workspace.
+
+Set `MONITORAI_AZURE_ENCRYPTION_KEY` to a Fernet key through protected runtime
+configuration. Preserve that key securely across restarts. Without it, Azure
+credential save and decryption fail closed. The Account workspace provides
+client creation, account setup, and client role assignment. Save an Azure
+service principal with read access scoped to the selected subscription.
+Existing unassigned architectures and legacy credentials are preserved
+in storage and require a separately approved migration to a client.
+
+Use HTTPS for deployed sign-in. For a loopback-only split frontend/backend
+development setup, explicitly set `MONITORAI_INSECURE_LOCAL_COOKIE=1` in the
+backend process environment and use the same loopback hostname for both origins.
+Automated checks run in GitHub Actions.
 
 ## Development Workflow (Docker PostgreSQL + Local Backend/Frontend)
 

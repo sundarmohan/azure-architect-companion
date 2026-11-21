@@ -8,6 +8,7 @@ from app.db.base import Base
 class Architecture(Base):
     __tablename__ = "architectures"
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    client_id: Mapped[UUID | None] = mapped_column(ForeignKey("client_workspaces.id"), index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     provider: Mapped[str] = mapped_column(String(30), nullable=False, default="azure")

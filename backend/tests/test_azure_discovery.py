@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 from app.domains.architecture.azure_discovery import AzureResourceDiscoveryAdapter
 
 

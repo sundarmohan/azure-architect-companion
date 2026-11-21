@@ -4,11 +4,16 @@ on:
   push:
     branches:
       - main
-  # Pull requests run the test jobs only; build and deploy are gated to main.
+      - consolidation/v2.2-baseline
   pull_request:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Publish and deploy this main revision to EC2
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,7 +22,7 @@ env:
   IMAGE_NAME: ghcr.io/sundarmohan/azure-architect-companion
 
 concurrency:
-  group: production-deployment
+  group: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy == true && 'production-deployment' || format('ci-{0}', github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -63,16 +68,17 @@ jobs:
           pip install -r requirements.txt
           pip install pytest-github-actions-annotate-failures
 
-      - name: Run pytest
-        working-directory: backend
-        run: |
-          pytest -v --tb=short
-
-      - name: Verify Alembic migration chain
+      - name: Verify Alembic migration chain on fresh PostgreSQL
         working-directory: backend
         run: |
           alembic heads
-          alembic history | head -20
+          alembic history
+          alembic upgrade head
+          alembic current
+
+      - name: Run pytest
+        working-directory: backend
+        run: pytest -v --tb=short
 
   frontend-test:
     runs-on: ubuntu-latest
@@ -100,7 +106,7 @@ jobs:
 
   build-and-push:
     needs: [backend-test, frontend-test]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -136,7 +142,7 @@ jobs:
 
   deploy:
     needs: build-and-push
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -194,9 +200,13 @@ jobs:
             # End-to-end smoke checks against the running container
             curl --fail --show-error --silent http://localhost:8001/health
             curl --fail --show-error --silent -o /dev/null http://localhost:8001/
-            curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/architectures
-            curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/azure/resource-catalog
-            curl --fail --show-error --silent -o /dev/null http://localhost:8001/api/settings
+            for path in api/architectures api/azure/resource-catalog api/settings/azure/status; do
+              code=$(curl --show-error --silent --output /dev/null --write-out '%{http_code}' "http://localhost:8001/$path")
+              if [ "$code" != 401 ]; then
+                echo "Expected HTTP 401 for unauthenticated GET /$path, received $code" >&2
+                exit 1
+              fi
+            done
             docker compose logs --tail=100 app
 
       - name: Verify public accessibility

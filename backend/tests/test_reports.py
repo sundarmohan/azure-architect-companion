@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 
 
 def _create_architecture(client: TestClient) -> dict:

@@ -32,6 +32,7 @@ import {
   validateRelationship,
   estimateArchitectureCost,
   getSettingsOverview,
+  getAzureConnectionStatus,
 } from "./services/api";
 
 const RESOURCE_ICONS = {
@@ -122,7 +123,7 @@ function GroupNode({ data, selected }) {
     <div className={`rg-node ${data.dropTarget ? "drop-target" : ""}`}>
       <NodeResizer
         color="#0878ca"
-        isVisible={selected}
+        isVisible={selected && !data.readOnly}
         minWidth={data.minWidth || 540}
         minHeight={data.minHeight || 420}
         handleStyle={{ width: 10, height: 10, borderRadius: 2 }}
@@ -307,7 +308,7 @@ export function buildCanvasNodes(resourceList, groups, catalogLookup) {
   return [...groupNodes, ...positioned];
 }
 
-export default function Designer({ architecture, onBack }) {
+export default function Designer({ architecture, onBack, phaseOne = false, canEdit = true }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -518,11 +519,13 @@ export default function Designer({ architecture, onBack }) {
 
   const renderedNodes = useMemo(() => nodes.map((node) => ({
     ...node,
+    ...(canEdit ? {} : { draggable: false, connectable: false, deletable: false }),
     data: {
       ...node.data,
+      readOnly: !canEdit,
       dropTarget: dropPreview.includes(node.id) || connectTargetIds.includes(node.id),
     },
-  })), [nodes, dropPreview, connectTargetIds]);
+  })), [nodes, dropPreview, connectTargetIds, canEdit]);
 
   const edgeFromRelationship = useCallback((relationship) => {
     const style = EDGE_STYLE_BY_TYPE[relationship.relationship_type] || EDGE_STYLE_BY_TYPE.connects_to;
@@ -555,7 +558,7 @@ export default function Designer({ architecture, onBack }) {
         listRelationships(architecture.id),
         listResourceGroups(architecture.id),
         listSubscriptions(architecture.id),
-        getSettingsOverview(),
+        phaseOne ? getAzureConnectionStatus() : getSettingsOverview(),
       ]);
 
       if (loadId !== latestLoadRef.current) {
@@ -568,7 +571,7 @@ export default function Designer({ architecture, onBack }) {
       setResources(resourceList);
       setResourceGroups(groups);
       setSubscriptions(subs);
-      setAzureIntegration(settings?.azure_integration || null);
+      setAzureIntegration((phaseOne ? settings : settings?.azure_integration) || null);
 
       setDiscoverySubscriptionId((current) => {
         if (!subs.length) {
@@ -598,7 +601,7 @@ export default function Designer({ architecture, onBack }) {
         setError(e.message);
       }
     }
-  }, [architecture.id, edgeFromRelationship, setEdges, setNodes]);
+  }, [architecture.id, edgeFromRelationship, phaseOne, setEdges, setNodes]);
 
   useEffect(() => {
     load();
@@ -1236,7 +1239,7 @@ export default function Designer({ architecture, onBack }) {
   function renderConfigurationField(field) {
     const value = configurationDraft[field.name] ?? "";
     const options = optionsForField(field);
-    const disabled = Boolean(selectedResource?.properties?.discovery_managed) || field.read_only || (field.depends_on && !configurationDraft[field.depends_on]);
+    const disabled = !canEdit || Boolean(selectedResource?.properties?.discovery_managed) || field.read_only || (field.depends_on && !configurationDraft[field.depends_on]);
     if (field.field_type === "boolean") {
       return <input type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(event) => setConfigurationValue(field, event.target.checked)} />;
     }
@@ -1261,7 +1264,7 @@ export default function Designer({ architecture, onBack }) {
         <div className="studio-head">
           <button className="back-button" onClick={onBack}>← All architectures</button>
           <h2>Azure Resources</h2>
-          <p>Drag a service onto the canvas to design your topology.</p>
+          {canEdit && <p>Drag a service onto the canvas to design your topology.</p>}
         </div>
 
         <div className="hierarchy-panel">
@@ -1281,14 +1284,14 @@ export default function Designer({ architecture, onBack }) {
           ) : null}
           <div className="hierarchy-section">
             <b>Subscriptions</b>
-            <button className="mini" onClick={openCreateSubscriptionModal}>+</button>
+            {canEdit && <button className="mini" onClick={openCreateSubscriptionModal}>+</button>}
             {subscriptions.map((item) => (
               <div className="hierarchy-item" key={item.id}>
                 <div>{item.name}</div>
                 <small>{item.subscription_id || "No Azure subscription ID mapped"}</small>
               </div>
             ))}
-            <div className="discovery-controls">
+            {!phaseOne && canEdit && <div className="discovery-controls">
               <select
                 value={discoverySubscriptionId}
                 onChange={(event) => setDiscoverySubscriptionId(event.target.value)}
@@ -1307,7 +1310,7 @@ export default function Designer({ architecture, onBack }) {
               <button onClick={discoverSubscriptionResources} disabled={subscriptions.length === 0 || discoveryLoading}>
                 {discoveryLoading ? "Discovering..." : "Discover Azure Resources"}
               </button>
-            </div>
+            </div>}
             {discoverySummary && (
               <div className="hierarchy-item">
                 {discoverySummary.success
@@ -1321,7 +1324,7 @@ export default function Designer({ architecture, onBack }) {
           </div>
           <div className="hierarchy-section">
             <b>Resource Groups</b>
-            <button className="mini" onClick={openCreateResourceGroupModal}>+</button>
+            {canEdit && <button className="mini" onClick={openCreateResourceGroupModal}>+</button>}
             {resourceGroups.map((item) => (
               <button
                 className={`rg-select ${activeRg === item.id ? "active" : ""}`}
@@ -1357,7 +1360,8 @@ export default function Designer({ architecture, onBack }) {
               <button
                 className="resource-btn"
                 key={item.resource_type}
-                draggable
+                draggable={canEdit}
+                disabled={!canEdit}
                 onDragStart={(event) => {
                   suppressCatalogClickRef.current = true;
                   event.dataTransfer.effectAllowed = "copy";
@@ -1400,12 +1404,14 @@ export default function Designer({ architecture, onBack }) {
               ? `Target: ${resourceGroups.find((item) => item.id === activeRg)?.name}`
               : "Create a Resource Group first"}
           </span>
-          <button onClick={saveLayout}>Save Layout</button>
-          <button onClick={autoLayout}>Auto Layout</button>
+          {canEdit && <>
+            <button onClick={saveLayout}>Save Layout</button>
+            <button onClick={autoLayout}>Auto Layout</button>
+          </>}
           <button onClick={load}>Reload</button>
-          {selectedNode && selectedNode.type !== "group" && <button onClick={() => setConnectSourceId((current) => current === selectedNode.id ? null : selectedNode.id)}>{connectSourceId === selectedNode.id ? "Cancel Connect" : "Connect"}</button>}
-          {selectedNode && selectedNode.type !== "group" && <button onClick={openRenameModal}>Rename</button>}
-          {(selectedNode || selectedEdge) && <button className="danger" onClick={deleteSelected}>Delete</button>}
+          {canEdit && selectedNode && selectedNode.type !== "group" && <button onClick={() => setConnectSourceId((current) => current === selectedNode.id ? null : selectedNode.id)}>{connectSourceId === selectedNode.id ? "Cancel Connect" : "Connect"}</button>}
+          {canEdit && selectedNode && selectedNode.type !== "group" && <button onClick={openRenameModal}>Rename</button>}
+          {canEdit && (selectedNode || selectedEdge) && <button className="danger" onClick={deleteSelected}>Delete</button>}
         </div>
 
         {error && <div className="canvas-error">{error}</div>}
@@ -1414,13 +1420,14 @@ export default function Designer({ architecture, onBack }) {
           nodes={renderedNodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          nodesDraggable
-          nodesConnectable
+          nodesDraggable={canEdit}
+          nodesConnectable={canEdit}
+          deleteKeyCode={canEdit ? "Backspace" : null}
           elementsSelectable
           panOnDrag
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
+          onConnect={canEdit ? onConnect : undefined}
           onInit={(instance) => {
             flowRef.current = instance;
           }}
@@ -1464,6 +1471,7 @@ export default function Designer({ architecture, onBack }) {
           }}
           fitView
           onDragOver={(event) => {
+            if (!canEdit) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
             try {
@@ -1474,6 +1482,7 @@ export default function Designer({ architecture, onBack }) {
             }
           }}
           onDrop={async (event) => {
+            if (!canEdit) return;
             event.preventDefault();
             setDropPreview([]);
             const raw = event.dataTransfer.getData("application/monitorai-resource");
@@ -1509,7 +1518,7 @@ export default function Designer({ architecture, onBack }) {
               <button className="inspector-close" onClick={() => setSelectedNode(null)} aria-label="Close inspector">×</button>
             </div>
             <div className="inspector-tabs">
-              {[["properties", "Properties"], ["details", "Dependencies"], ["cost", "Cost"]].map(([value, label]) => (
+              {[["properties", "Properties"], ["details", "Dependencies"], ...(!phaseOne ? [["cost", "Cost"]] : [])].map(([value, label]) => (
                 <button key={value} className={inspectorTab === value ? "active" : ""} onClick={() => setInspectorTab(value)}>{label}</button>
               ))}
             </div>
@@ -1537,7 +1546,7 @@ export default function Designer({ architecture, onBack }) {
                   </section>
                 ))}
                 {selectedConfiguration?.configuration_status === "common_properties_only" ? <p className="inspector-empty">Configuration not yet modeled for this resource type beyond common properties.</p> : null}
-                <button className="inspector-save" onClick={saveConfiguration} disabled={configurationSaving}>{configurationSaving ? "Saving..." : "Save configuration"}</button>
+                {canEdit && <button className="inspector-save" onClick={saveConfiguration} disabled={configurationSaving}>{configurationSaving ? "Saving..." : "Save configuration"}</button>}
               </div>
             ) : inspectorTab === "details" ? (
               <div className="inspector-body">

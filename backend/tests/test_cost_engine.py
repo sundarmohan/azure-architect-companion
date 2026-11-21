@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 from app.domains.architecture.models import Architecture, ArchitectureResource, AzureResourceGroup, AzureSubscription
 from app.domains.cost.azure_cost_management_adapter import AzureCostManagementAdapter
 from app.domains.cost.azure_retail_adapter import AzureRetailPricingAdapter

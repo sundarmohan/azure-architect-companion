@@ -3,24 +3,57 @@ const GET_CACHE_TTL_MS=30_000;
 const getCache=new Map();
 const getInFlight=new Map();
 let cacheGeneration=0;
+let clientId="";
+let sessionGeneration=0;
+let unauthorizedHandler;
 
-function cacheKey(path){return `${API}${path}`;}
+export function setApiSession(nextClientId=""){
+ clientId=nextClientId;
+ sessionGeneration+=1;
+ clearApiGetCache();
+}
+
+export function onUnauthorized(handler){
+ unauthorizedHandler=handler;
+ return ()=>{ if(unauthorizedHandler===handler) unauthorizedHandler=undefined; };
+}
+
+function cacheKey(path){return `${sessionGeneration}:${API}${path}`;}
 
 async function fetchRequest(path,options={}){
- const r=await fetch(`${API}${path}`,{headers:{"Content-Type":"application/json",...(options.headers||{})},...options});
+ const generation=sessionGeneration;
+ const authRoute=path.startsWith("/auth/");
+ const method=(options.method||"GET").toUpperCase();
+ const headers=new Headers(options.headers);
+ if(options.body) headers.set("Content-Type","application/json");
+ if(method!=="GET") headers.set("X-MonitorAI-Request","1");
+ if(clientId&&!authRoute) headers.set("X-Client-ID",clientId);
+ const r=await fetch(`${API}${path}`,{...options,headers,credentials:"include"});
+ const verifySession=()=>{
+  if(!authRoute&&generation!==sessionGeneration){
+   throw new DOMException("The active client changed.","AbortError");
+  }
+ };
+ verifySession();
  if(!r.ok){
   let message=`HTTP ${r.status}`;
   try{
-   const payload=await r.json();
+   const raw=await r.text();
+   const payload=raw?JSON.parse(raw):null;
    if(typeof payload?.detail==="string")message=payload.detail;
-   else message=JSON.stringify(payload);
-  }catch{
-   const text=await r.text();
-   if(text)message=text;
+   else if(typeof payload?.detail?.message==="string")message=payload.detail.message;
+  }catch{ /* A proxy may return a non-JSON error. */ }
+  verifySession();
+  if(r.status===401&&generation===sessionGeneration&&!["/auth/login","/auth/me"].includes(path)){
+   unauthorizedHandler?.();
   }
-  throw new Error(message);
+  const error=new Error(message);
+  error.status=r.status;
+  throw error;
  }
- return r.status===204?null:r.json();
+ const data=r.status===204?null:await r.json();
+ verifySession();
+ return data;
 }
 
 function refreshGet(path,options){
@@ -30,7 +63,9 @@ function refreshGet(path,options){
  const requestPromise=fetchRequest(path,options).then((data)=>{
   if(generation===cacheGeneration) getCache.set(key,{data,storedAt:Date.now()});
   return data;
- }).finally(()=>getInFlight.delete(key));
+ }).finally(()=>{
+  if(getInFlight.get(key)===requestPromise) getInFlight.delete(key);
+ });
  getInFlight.set(key,requestPromise);
  return requestPromise;
 }
@@ -38,7 +73,6 @@ function refreshGet(path,options){
 async function request(path,options={}){
  const method=(options.method||"GET").toUpperCase();
  if(method!=="GET") return fetchRequest(path,options).then((data)=>{
-  cacheGeneration+=1;
   clearApiGetCache();
   return data;
  });
@@ -47,7 +81,7 @@ async function request(path,options={}){
  const cached=getCache.get(key);
  if(cached && Date.now()-cached.storedAt<GET_CACHE_TTL_MS){
   // Return the last good response immediately while refreshing it once in the background.
-  void refreshGet(path,options);
+  void refreshGet(path,options).catch(()=>{});
   return cached.data;
  }
  return refreshGet(path,options);
@@ -56,7 +90,21 @@ async function request(path,options={}){
 export function clearApiGetCache(){
  cacheGeneration+=1;
  getCache.clear();
+ getInFlight.clear();
 }
+
+const authWrite=(path,data)=>fetchRequest(`/auth/${path}`,{
+ method:"POST",
+ ...(data===undefined?{}:{body:JSON.stringify(data)}),
+});
+export const login=(username,password)=>authWrite("login",{username,password});
+export const logout=()=>authWrite("logout");
+export const getCurrentUser=()=>fetchRequest("/auth/me",{cache:"no-store"});
+export const changePassword=data=>authWrite("password",data);
+export const createUser=data=>authWrite("users",data);
+export const resetUserPassword=(username,data)=>authWrite(`users/${encodeURIComponent(username)}/password`,data);
+export const createClient=data=>authWrite("clients",data);
+export const setClientMember=(id,data)=>authWrite(`clients/${encodeURIComponent(id)}/members`,data);
 export const listArchitectures=()=>request("/architectures");
 export const createArchitecture=data=>request("/architectures",{method:"POST",body:JSON.stringify(data)});
 export const updateArchitecture=(id,data)=>request(`/architectures/${id}`,{method:"PUT",body:JSON.stringify(data)});
@@ -103,6 +151,7 @@ export const getArchitectureExecutiveReport=(aid,data={})=>request(`/reports/arc
 export const estimateArchitectureCost=(id,data={})=>request(`/architectures/${id}/cost-estimate`,{method:"POST",body:JSON.stringify(data)});
 export const getArchitectureActualCost=(id,data={})=>request(`/architectures/${id}/actual-cost`,{method:"POST",body:JSON.stringify(data)});
 export const getSettingsOverview=()=>request("/settings");
+export const getAzureConnectionStatus=()=>request("/settings/azure/status");
 export const updateProviderApiKey=(provider,data)=>request(`/settings/providers/${provider}`,{method:"PUT",body:JSON.stringify(data)});
 export const clearProviderApiKey=provider=>request(`/settings/providers/${provider}`,{method:"DELETE"});
 export const testProviderConnection=provider=>request(`/settings/providers/${provider}/test`,{method:"POST",body:JSON.stringify({})});

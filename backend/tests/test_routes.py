@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from tests.legacy_app import app
 from app.domains.architecture.catalog import classify_relationship_rule
 
 
@@ -91,7 +91,7 @@ def test_subscriptions_resource_groups_and_ownership(client: TestClient):
         f"/api/architectures/{arch_b['id']}/resource-groups",
         json={"name": "rg-bad", "location": "East US", "subscription_id": sub_a_id},
     )
-    assert rg_bad.status_code == 400
+    assert rg_bad.status_code == 404
 
     cleanup_a = client.delete(f"/api/architectures/{arch_a['id']}")
     cleanup_b = client.delete(f"/api/architectures/{arch_b['id']}")
@@ -268,7 +268,7 @@ def test_invalid_references_return_4xx(client: TestClient):
             "resource_group_id": rg_b_id,
         },
     )
-    assert cross_resource.status_code == 400
+    assert cross_resource.status_code == 404
 
     bad_rg = client.post(
         f"/api/architectures/{arch_a['id']}/resources",
