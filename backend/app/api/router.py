@@ -13,6 +13,7 @@ from app.domains.architecture.lifecycle import router as lifecycle_router
 from app.domains.architecture.azure_routes import router as azure_router
 from app.domains.architecture.models import Architecture
 from app.domains.architecture.routes import router as architecture_router
+from app.domains.monitoring.observation_routes import router as observation_router
 
 GRAPH_ENDPOINTS = {
     "list_architectures", "create_architecture", "get_architecture", "update_architecture",
@@ -66,3 +67,4 @@ api_router.include_router(settings_router, prefix="/settings/azure", tags=["sett
 api_router.include_router(inventory_router, prefix="/azure", tags=["azure-inventory"])
 api_router.include_router(lifecycle_router, prefix="/architectures", tags=["design-lifecycle"])
 api_router.include_router(artifacts_router, prefix="/architectures", tags=["design-artifacts"])
+api_router.include_router(observation_router, prefix="/azure", tags=["azure-observations"])

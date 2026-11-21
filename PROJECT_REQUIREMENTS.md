@@ -227,7 +227,7 @@ Phase	Development scope
 0	Repository and architecture preparation
 1	Local authentication, clients, RBAC and application foundation
 2	Azure architecture designer, connections, resource inventory, and Terraform/Ansible exports
-3	Infrastructure monitoring and network intelligence
+3	Client-scoped Azure infrastructure monitoring and network intelligence
 4	Cybersecurity and threat detection
 5	Ethical hacking and vulnerability management
 6	Compliance and evidence management
@@ -235,6 +235,20 @@ Phase	Development scope
 8	Cost, backup/DR and operational intelligence
 9	Reports and complete functional validation
 10	Repository cleanup, Docker finalization and first EC2 deployment
+
+Phase 3 delivery and verification:
+- Use the client's existing Azure connection and latest complete inventory.
+- Collect Azure Resource Health and supported Azure Monitor performance,
+  capacity and traffic metrics. Report missing data, permission failures,
+  resource coverage limits and last successful collection.
+- Correlate inventoried network resources, topology links, DNS, routes, NSGs,
+  firewalls and explicit exposure indicators using read-only Azure APIs.
+- Allow client administrators to opt in to per-subscription polling. Keep
+  all observations and schedules scoped to that client and subscription.
+- Azure Monitor counters provide aggregate traffic evidence. Flow-level traffic
+  attribution and effective reachability need separate Azure data sources.
+- Verify isolation, permission checks, snapshot retention, scheduling, and
+  the frontend build through GitHub Actions.
 
 13. First deployment and manual testing
 The first complete deployment should follow this sequence:

@@ -10,6 +10,7 @@ from app.domains.architecture import lifecycle_models  # noqa: F401
 from app.domains.architecture import models  # noqa: F401
 from app.domains.settings import models as settings_models  # noqa: F401
 from app.domains.incidents import models as incident_models  # noqa: F401
+from app.domains.monitoring import observation_models  # noqa: F401
 
 config = context.config
 # Prefer the runtime DATABASE_URL (containers/CI) over the dev default in alembic.ini.

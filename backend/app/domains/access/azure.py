@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.monitoring.observation_models import AzureObservation, AzureObservationSchedule
 from app.domains.settings.schemas import AzureIntegrationStatusRead
 from .models import AzureConnection, AzureInventorySnapshot, Client
 from .routes import audit, client_access, client_admin, current_account, get_db
@@ -104,16 +105,20 @@ async def save_credentials(payload: Credentials, request: Request, client_id: UU
     encrypted = cipher().encrypt(json.dumps(dict(values, workspace_id=str(client_id))).encode()).decode()
     await db.execute(insert(AzureConnection).values(client_id=client_id, ciphertext=encrypted)
         .on_conflict_do_update(index_elements=[AzureConnection.client_id], set_={"ciphertext": encrypted}))
-    retire = delete(AzureInventorySnapshot).where(AzureInventorySnapshot.client_id == client_id)
     same_identity = previous and all(previous[key] == values[key] for key in ("tenant_id", "client_id"))
-    if same_identity:
-        retire = retire.where(
-            AzureInventorySnapshot.subscription_id.not_in([UUID(item) for item in subscription_ids(values)])
-        )
-    await db.execute(retire)
+    retained = [UUID(item) for item in subscription_ids(values)] if same_identity else []
+    await retire_observations(db, client_id, retained)
     audit(db, "save_azure_connection", request.state.account, client_id)
     await db.commit()
     return status_for(values)
+
+
+async def retire_observations(db, client_id, retained):
+    for model in (AzureInventorySnapshot, AzureObservation, AzureObservationSchedule):
+        query = delete(model).where(model.client_id == client_id)
+        if retained:
+            query = query.where(model.subscription_id.not_in(retained))
+        await db.execute(query)
 
 
 @router.delete("/credentials", response_model=ConnectionStatus)
@@ -121,7 +126,7 @@ async def clear_credentials(request: Request, client_id: UUID = Depends(client_a
                             db: AsyncSession = Depends(get_db)):
     await db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
     await db.execute(delete(AzureConnection).where(AzureConnection.client_id == client_id))
-    await db.execute(delete(AzureInventorySnapshot).where(AzureInventorySnapshot.client_id == client_id))
+    await retire_observations(db, client_id, [])
     audit(db, "clear_azure_connection", request.state.account, client_id)
     await db.commit()
     return status_for()

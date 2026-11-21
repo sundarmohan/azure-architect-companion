@@ -14,6 +14,7 @@ from app.domains.architecture import models  # noqa: F401
 from app.domains.settings import models as settings_models  # noqa: F401
 from app.domains.incidents import models as incident_models  # noqa: F401
 from app.domains.monitoring import models as monitoring_models  # noqa: F401
+from app.domains.monitoring.observation_worker import run_worker, stop_worker
 
 app = FastAPI(title="MonitorAI V2.20 API", version="2.20")
 
@@ -60,10 +61,14 @@ def run_migrations() -> None:
 async def initialize_database():
     await asyncio.to_thread(run_migrations)
     await bootstrap_admin()
+    app.state.observation_worker = (
+        asyncio.create_task(run_worker()) if os.getenv("MONITORAI_OBSERVATION_WORKER", "1") == "1" else None
+    )
 
 
 @app.on_event("shutdown")
 async def close_database():
+    await stop_worker(getattr(app.state, "observation_worker", None))
     await engine.dispose()
 
 
