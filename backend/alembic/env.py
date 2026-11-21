@@ -5,6 +5,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.db.base import Base
+from app.domains.assessments import models as assessment_models  # noqa: F401
 from app.domains.access import models as access_models  # noqa: F401
 from app.domains.architecture import lifecycle_models  # noqa: F401
 from app.domains.architecture import models  # noqa: F401

@@ -140,6 +140,17 @@ Safety requirements:
 - No denial-of-service, destructive testing, data exfiltration or unauthorized exploitation.
 - No automatic exploitation or remediation.
 - Production testing requires separate explicit authorization.
+Phase 5 delivered scope:
+- Store client-isolated authorization references, environments, approved scope,
+  exclusions, and assessment windows for human-led assessments.
+- Import sanitized findings from approved tools as bounded JSON, retaining
+  severity, evidence, optional observation time, tool version, and methodology.
+- Deduplicate by assessment, source, and external finding ID. Track owners,
+  due dates, lifecycle stages, and human retest notes. Export assessment records
+  and finding history for reporting.
+- Collection and tool execution occur outside MonitorAI. The product does not
+  initiate active testing, run scanners, or attach raw sensitive evidence.
+
 6. Vulnerability and Threat Intelligence
 - Consolidate vulnerability findings from Azure and integrated scanners.
 - Deduplicate repeated findings.

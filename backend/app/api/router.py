@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.assessments.routes import router as assessment_router
 from app.domains.access.azure import router as settings_router
 from app.domains.access.inventory import router as inventory_router
 from app.domains.access.routes import audit, client_access, get_db, require_request_header
@@ -72,3 +73,4 @@ api_router.include_router(artifacts_router, prefix="/architectures", tags=["desi
 api_router.include_router(observation_router, prefix="/azure", tags=["azure-observations"])
 api_router.include_router(diagnostics_router, prefix="/azure/diagnostics", tags=["azure-diagnostics"])
 api_router.include_router(security_router, prefix="/azure/security", tags=["azure-security"])
+api_router.include_router(assessment_router, prefix="/assessments", tags=["security-assessments"])

@@ -47,11 +47,25 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 - [x] Phase 4: Azure cybersecurity posture, threat signals, and finding tracking.
   [GitHub Actions verified the Phase 4 code at `c6e57d1`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44941135258).
   CI uses mocked Azure responses. The EC2 preview still runs the Phase 3 release.
+- [ ] Phase 5: authorized assessment records, finding imports, and retest tracking.
 - [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
 
 GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
 and the production frontend build. Azure integration tests use mocked provider
 responses.
+
+## Phase 5 assessment and vulnerability records
+
+In Assessment & Vulnerabilities, record authorization references, environment,
+scope, exclusions, and the time window for work performed by authorized people.
+Import a JSON batch of sanitized findings from an approved tool. Repeat imports
+with the same source and external ID preserve the original finding and tracking.
+Move findings through confirmation, remediation, and human retest. A retest note
+is required to close a finding. Reports can be exported as JSON.
+
+MonitorAI records and tracks assessment evidence. Assessment actions never
+connect to assessment targets, trigger tests, or run scanners. Keep credentials,
+personal data, and raw diagnostic outputs out of imported summaries.
 
 ## Phase 4 Azure cybersecurity and threat detection
 
