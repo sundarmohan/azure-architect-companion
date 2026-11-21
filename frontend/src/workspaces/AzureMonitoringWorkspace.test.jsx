@@ -86,6 +86,9 @@ describe("Azure monitoring workspace", () => {
     expect(screen.queryByRole("button", { name: "Refresh snapshot" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Collection schedule" })).not.toBeInTheDocument();
     expect(getAzureMonitoringSchedule).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reload saved snapshot" }));
+    await waitFor(() => expect(getAzureMonitoring).toHaveBeenCalledTimes(2));
+    expect(refreshAzureMonitoring).not.toHaveBeenCalled();
   });
 
   it("saves the collection schedule for the selected subscription as an administrator", async () => {

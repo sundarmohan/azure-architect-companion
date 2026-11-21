@@ -26,6 +26,7 @@ function SnapshotPanel({ subscription, canRefresh, loadSnapshot, refreshSnapshot
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [readCount, setReadCount] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -37,7 +38,7 @@ function SnapshotPanel({ subscription, canRefresh, loadSnapshot, refreshSnapshot
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [loadSnapshot, subscription]);
+  }, [loadSnapshot, readCount, subscription]);
 
   async function refresh() {
     setRefreshing(true);
@@ -59,12 +60,19 @@ function SnapshotPanel({ subscription, canRefresh, loadSnapshot, refreshSnapshot
       {snapshot && <>
         <p role="status">{SNAPSHOT_STATUS[snapshot.status] || displayLabel(snapshot.status)}</p>
         {snapshot.failure_reason && snapshot.failure_reason !== snapshot.status && <p>{SNAPSHOT_STATUS[snapshot.failure_reason] || displayLabel(snapshot.failure_reason)}</p>}
-        <p>Last attempt {snapshotTime(snapshot.last_attempt_at)} · Last successful collection {snapshotTime(snapshot.last_success_at)}</p>
+        <p>Last attempt {snapshotTime(snapshot.last_attempt_at)} · Last complete collection {snapshotTime(snapshot.last_success_at)}</p>
         {snapshot.last_success_at && snapshot.status !== "synced" && <p>Showing the last available data.</p>}
       </>}
-      {canRefresh && <div><button disabled={loading || refreshing} onClick={refresh}>
-        {refreshing ? "Refreshing…" : "Refresh snapshot"}
-      </button></div>}
+      <div className="actions">
+        <button className="dismiss" disabled={loading || refreshing} onClick={() => {
+          setLoading(true);
+          setError("");
+          setReadCount((count) => count + 1);
+        }}>Reload saved snapshot</button>
+        {canRefresh && <button disabled={loading || refreshing} onClick={refresh}>
+          {refreshing ? "Refreshing…" : "Refresh snapshot"}
+        </button>}
+      </div>
     </section>
     {children(snapshot, subscription)}
   </>;
