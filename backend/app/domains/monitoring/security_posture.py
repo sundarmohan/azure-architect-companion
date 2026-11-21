@@ -17,6 +17,7 @@ PROFILES = {
     "microsoft.sql/servers": ("2023-08-01", ""),
     "microsoft.sql/servers/databases": ("2023-08-01", "/transparentDataEncryption/current"),
 }
+FAILED_CHANGE_THRESHOLD = 3
 WEIGHTS = {"critical": 30, "high": 15, "medium": 7, "low": 2, "informational": 0}
 PRIVILEGED_ROLES = {
     "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
@@ -134,6 +135,25 @@ def identity_findings(rows, scope):
                     "Identity", "azure_role_assignments") for role, count in sorted(counts.items())]
 
 
+def activity_signals(feed_items):
+    signals = []
+    for item in feed_items:
+        if item["source"] != "azure_activity_log":
+            continue
+        facts = object_fields(item["evidence"])
+        count = facts.get("count")
+        if facts.get("status") != "failed" or type(count) is not int or count < FAILED_CHANGE_THRESHOLD:
+            continue
+        signal = control(
+            "repeated_security_control_failures", "Repeated failed security-control changes", "medium",
+            item["resource_id"], facts,
+            "Review Azure Activity for the operation, actor and reason before escalating.", "Threat signals",
+            "azure_activity_rule",
+        )
+        signals.append(signal)
+    return signals
+
+
 def finding_view(item, timestamp):
     evidence = item["evidence"]
     parts = [item["source"], item["code"], item["severity"], item["resource_id"].casefold()]
@@ -169,7 +189,7 @@ async def collect_security_snapshot(subscription_id, resources, network, http, h
     else:
         limits.append("Refresh Network Intelligence to include saved network posture evidence.")
     limits.append("Patch and vulnerability coverage depends on Defender assessments available to this connection. Role review covers direct built-in subscription assignments only.")
-    findings = [*feed_items, *identity_findings(rbac_rows if rbac_ok else [], scope),
+    findings = [*feed_items, *activity_signals(feed_items), *identity_findings(rbac_rows if rbac_ok else [], scope),
                 *(item for _, items in configurations for item in items)]
     if network:
         findings.extend(network_findings(network["resources"], network["links"], {row["id"].casefold() for row in resources}))

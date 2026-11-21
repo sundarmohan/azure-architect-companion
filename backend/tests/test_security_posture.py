@@ -49,3 +49,15 @@ def test_security_posture_scores_authorized_configuration_without_exposing_paylo
     }
     assert "sensitive" not in str(payload)
     assert "Defender evidence unavailable." in limits
+
+
+def test_repeated_failed_control_changes_are_review_signals():
+    source = {"source": "azure_activity_log", "resource_id": "/subscriptions/example"}
+    findings = security_posture.activity_signals([
+        {**source, "evidence": {"status": "succeeded", "count": 5}},
+        {**source, "evidence": {"status": "failed", "count": 2}},
+        {**source, "evidence": {"status": "failed", "count": 3, "operation": "role_assignment_written"}},
+    ])
+    assert len(findings) == 1
+    assert findings[0]["code"] == "repeated_security_control_failures"
+    assert findings[0]["evidence"]["count"] == 3

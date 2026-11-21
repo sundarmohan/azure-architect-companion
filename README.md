@@ -58,6 +58,8 @@ complete inventory. Editors and administrators can refresh evidence, and
 administrators can opt in to scheduled security collection. The workspace
 shows read-only configuration findings, Defender assessments and active
 alerts where available, and selected Azure Activity security-control signals.
+A burst of at least three failed changes of the same type on the same scope
+in 24 hours is flagged for review.
 Refresh Network Intelligence beforehand to include its configured exposure
 evidence.
 
