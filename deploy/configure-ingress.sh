@@ -37,11 +37,34 @@ cp "$work/original" "$work/updated"
 
 docker exec -i "$proxy" sh -c 'umask 077; cat > "$1"' sh "$staged" < "$work/updated"
 docker exec "$proxy" caddy validate --adapter caddyfile --config "$staged"
+rca_status() {
+    curl -sS --max-time 8 --resolve rca.genixtec.com:443:127.0.0.1 \
+        -o /dev/null -w '%{http_code}' https://rca.genixtec.com/
+}
+
+before=$(rca_status)
+[[ "$before" =~ ^[234][0-9][0-9]$ ]]
+apply_config() {
+    if grep -Eq '^[[:space:]]*admin[[:space:]]+off([[:space:]]|$)' "$work/original"; then
+        docker restart "$proxy" >/dev/null
+    else
+        docker exec "$proxy" caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile
+    fi
+}
+
 sudo -n cmp -s "$source" "$work/original"
 sudo -n tee "$source" < "$work/updated" >/dev/null
-if ! docker exec "$proxy" caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile; then
-    sudo -n tee "$source" < "$work/original" >/dev/null
-    docker exec "$proxy" caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile
-    exit 1
+if apply_config; then
+    for attempt in $(seq 1 12); do
+        if [[ "$(rca_status 2>/dev/null || true)" == "$before" ]]; then
+            echo "MonitorAI virtual host added; existing RCA route checks passed"
+            exit 0
+        fi
+        sleep 2
+    done
 fi
-echo "MonitorAI virtual host added to existing Caddy"
+
+sudo -n tee "$source" < "$work/original" >/dev/null
+apply_config
+echo "Original Caddy configuration restored" >&2
+exit 1
