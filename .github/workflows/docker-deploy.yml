@@ -1,3 +1,291 @@
+name: MonitorAI V2.2 - Build and Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+      - consolidation/v2.2-baseline
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Build, publish and deploy this commit to the approved EC2
+        type: boolean
+        required: true
+        default: false
+      verify_browser:
+        description: Run browser login and workspace verification after deployment
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/sundarmohan/azure-architect-companion
+
+concurrency:
+  group: monitorai-v22-${{ github.event_name == 'workflow_dispatch' && inputs.deploy == true && 'deployment' || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: monitorai
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: monitorai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U monitorai -d monitorai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://monitorai:ci_only_password@localhost:5432/monitorai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-github-actions-annotate-failures
+      - name: Validate Alembic migration chain
+        working-directory: backend
+        run: |
+          alembic heads
+          alembic history
+          alembic upgrade head
+          alembic current
+      - name: Run backend tests
+        working-directory: backend
+        run: pytest -v --tb=short
+
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  build-and-push:
+    name: Build and Push Docker Image
+    needs:
+      - backend-test
+      - frontend-test
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Record published image
+        run: |
+          {
+            echo "### Docker image published"
+            echo ""
+            echo "- Image: \`${IMAGE_NAME}:${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to Approved EC2
+    needs: build-and-push
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy == true
+    runs-on: ubuntu-latest
+    # Secrets and variables are stored under Settings > Environments > Dev.
+    environment: Dev
+    permissions:
+      contents: read
+      packages: read
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in EC2_HOST EC2_USER EC2_SSH_PRIVATE_KEY EC2_INSTANCE_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing or unavailable Dev environment value: ${name}"
+              exit 1
+            fi
+            echo "${name}: configured"
+          done
+          echo "All deployment settings are available."
+
+      - name: Copy deployment files to EC2
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml,deploy/deploy.sh"
+          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22"
+
+      - name: Identify EC2 and deploy exact image
+        uses: appleboy/ssh-action@v1
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKER_IMAGE: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          command_timeout: 20m
+          envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG,EC2_INSTANCE_ID
+          script: |
+            set -Eeuo pipefail
+            cd ~/monitorai-v22
+
+            echo "=== IDENTIFYING EC2 TARGET ==="
+            TOKEN=$(curl -fsS --max-time 5 \
+              -X PUT \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+              http://169.254.169.254/latest/api/token)
+            INSTANCE_ID=$(curl -fsS --max-time 5 \
+              -H "X-aws-ec2-metadata-token: $TOKEN" \
+              http://169.254.169.254/latest/meta-data/instance-id)
+            REGION=$(curl -fsS --max-time 5 \
+              -H "X-aws-ec2-metadata-token: $TOKEN" \
+              http://169.254.169.254/latest/meta-data/placement/region)
+            PRIVATE_IP=$(curl -fsS --max-time 5 \
+              -H "X-aws-ec2-metadata-token: $TOKEN" \
+              http://169.254.169.254/latest/meta-data/local-ipv4)
+
+            echo "EC2 Instance ID: $INSTANCE_ID"
+            echo "AWS Region: $REGION"
+            echo "Private IP: $PRIVATE_IP"
+
+            if [ "$INSTANCE_ID" != "$EC2_INSTANCE_ID" ]; then
+              echo "::error::EC2 instance ID does not match the approved target."
+              exit 1
+            fi
+
+            echo "=== AUTHENTICATING TO GHCR ==="
+            echo "$GHCR_TOKEN" | docker login ghcr.io \
+              -u "$GHCR_USER" --password-stdin
+            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
+            export IMAGE_TAG DOCKER_IMAGE
+            export COMPOSE_PROJECT_NAME=monitorai-v22
+            echo "Image to deploy: $DOCKER_IMAGE:$IMAGE_TAG"
+
+            echo "=== DEPLOYING MONITORAI V2.2 ==="
+            # deploy.sh and docker-compose.yml must use DOCKER_IMAGE and IMAGE_TAG.
+            bash deploy/deploy.sh
+
+            echo "=== VERIFYING CONTAINERS ==="
+            APP=$(docker compose ps -q app)
+            DB=$(docker compose ps -q postgres)
+            test -n "$APP"
+            test -n "$DB"
+
+            EXPECTED_IMAGE="$DOCKER_IMAGE:$IMAGE_TAG"
+            ACTUAL_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$APP")
+            if [ "$ACTUAL_IMAGE" != "$EXPECTED_IMAGE" ]; then
+              echo "Expected image: $EXPECTED_IMAGE"
+              echo "Actual image: $ACTUAL_IMAGE"
+              exit 1
+            fi
+
+            APP_STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$APP")
+            DB_STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$DB")
+            test "$APP_STATUS" = "healthy"
+            test "$DB_STATUS" = "healthy"
+
+            echo "Application: $APP_STATUS"
+            echo "Database: $DB_STATUS"
+            echo "Running image: $ACTUAL_IMAGE"
+
+            echo "=== VERIFYING DATABASE MIGRATIONS ==="
+            docker compose exec -T app alembic heads
+            docker compose exec -T app alembic current
+
+            echo "=== VERIFYING APPLICATION HEALTH ==="
+            curl -fsS http://127.0.0.1:8003/health
+            echo
+
+            API_STATUS=$(curl -sS -o /dev/null \
+              -w '%{http_code}' \
+              http://127.0.0.1:8003/api/auth/me)
+            if [ "$API_STATUS" != "401" ] && [ "$API_STATUS" != "403" ]; then
+              echo "Protected API returned unexpected status: $API_STATUS"
+              exit 1
+            fi
+
+            echo "Protected API authentication check: $API_STATUS"
+            echo "=== DEPLOYMENT VERIFIED ==="
+            echo "EC2 Instance: $INSTANCE_ID"
+            echo "Region: $REGION"
+            echo "Private IP: $PRIVATE_IP"
+            echo "Image: $ACTUAL_IMAGE"
 
       - name: Deployment summary
         if: success()
