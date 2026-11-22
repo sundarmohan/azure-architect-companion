@@ -213,3 +213,38 @@ jobs:
           npm install --no-audit --no-fund --no-save playwright-core@1.56.1
           cp "$GITHUB_WORKSPACE/deploy/browser-smoke.cjs" .
           node browser-smoke.cjs
+      - name: Retire the verified dedicated Phase 5 preview
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          command_timeout: 3m
+          script: |
+            set -eu
+            project=monitorai-v22-preview
+            volume=monitorai-v22-preview_monitorai_pg_data
+            image=ghcr.io/sundarmohan/azure-architect-companion:preview-5ee4f5a1ca29cb5c69a14a19cb52de55c092959c
+            app=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=app)
+            db=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=postgres)
+            if [ -z "$app$db" ] && ! docker volume inspect "$volume" >/dev/null 2>&1; then
+              echo "Dedicated preview already absent"
+              exit 0
+            fi
+            test -n "$app" && test -n "$db" || { echo "Preview ownership incomplete"; exit 1; }
+            for id in "$app" "$db"; do
+              test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id")" = "$HOME/$project"
+            done
+            test "$(docker inspect --format '{{.Config.Image}}' "$app")" = "$image"
+            test "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$db")" = "$volume"
+            test "$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$volume")" = "$project"
+            test "$(docker ps -aq --filter "volume=$volume")" = "$db"
+            docker stop "$app" "$db"
+            docker rm "$app" "$db"
+            docker volume rm "$volume"
+            image_id=$(docker image inspect --format '{{.Id}}' "$image")
+            if [ -z "$(docker ps -aq --filter "ancestor=$image_id")" ]; then
+              docker image rm "$image"
+            fi
+            curl -fsS http://127.0.0.1:8003/health
+            echo "Dedicated preview containers and database volume retired"
