@@ -1,4 +1,3 @@
-
 name: MonitorAI V2.2 - Build and Deploy to EC2
 
 on:
@@ -18,7 +17,6 @@ on:
         type: boolean
         required: true
         default: false
-
       verify_browser:
         description: Run browser login and workspace verification after deployment
         type: boolean
@@ -36,15 +34,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
-  # --------------------------------------------------
-  # 1. BACKEND TESTS AND DATABASE MIGRATION VALIDATION
-  # --------------------------------------------------
-
   backend-test:
     name: Backend Tests
     runs-on: ubuntu-latest
-
     services:
       postgres:
         image: postgres:16-alpine
@@ -59,28 +51,23 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-
     env:
       DATABASE_URL: postgresql+asyncpg://monitorai:ci_only_password@localhost:5432/monitorai
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-
       - name: Install dependencies
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest-github-actions-annotate-failures
-
       - name: Validate Alembic migration chain
         working-directory: backend
         run: |
@@ -88,79 +75,56 @@ jobs:
           alembic history
           alembic upgrade head
           alembic current
-
       - name: Run backend tests
         working-directory: backend
         run: pytest -v --tb=short
 
-  # --------------------------------------------------
-  # 2. FRONTEND TESTS AND PRODUCTION BUILD
-  # --------------------------------------------------
-
   frontend-test:
     name: Frontend Tests
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-
       - name: Install dependencies
         working-directory: frontend
         run: npm ci --no-audit --no-fund
-
       - name: Run frontend tests
         working-directory: frontend
         run: npm test
-
       - name: Build frontend
         working-directory: frontend
         run: npm run build
-
-  # --------------------------------------------------
-  # 3. BUILD AND PUSH DOCKER IMAGE
-  # Only manual deployment from main
-  # --------------------------------------------------
 
   build-and-push:
     name: Build and Push Docker Image
     needs:
       - backend-test
       - frontend-test
-
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch' &&
       inputs.deploy == true
-
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
-
     outputs:
       image_tag: ${{ github.sha }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and Push
         uses: docker/build-push-action@v6
         with:
@@ -170,37 +134,32 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
       - name: Record published image
         run: |
-          echo "### Docker image published" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`${IMAGE_NAME}:${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
-
-  # --------------------------------------------------
-  # 4. DEPLOY TO THE VERIFIED EC2 INSTANCE
-  # --------------------------------------------------
+          {
+            echo "### Docker image published"
+            echo ""
+            echo "- Image: \`${IMAGE_NAME}:${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to Approved EC2
     needs: build-and-push
-
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch' &&
       inputs.deploy == true
-
     runs-on: ubuntu-latest
-
+    # Secrets and variables are stored under Settings > Environments > Dev.
+    environment: Dev
     permissions:
       contents: read
       packages: read
-
     env:
       EC2_HOST: ${{ secrets.EC2_HOST }}
       EC2_USER: ${{ secrets.EC2_USER }}
       EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
       EXPECTED_EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -209,30 +168,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          for name in EC2_HOST EC2_USER EC2_SSH_PRIVATE_KEY EXPECTED_EC2_INSTANCE_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing or unavailable Dev environment value: ${name}"
+              exit 1
+            fi
+            echo "${name}: configured"
+          done
+          echo "All deployment settings are available."
 
-          test -n "$EC2_HOST" || {
-            echo "Missing secret EC2_HOST"
-            exit 1
-          }
-
-          test -n "$EC2_USER" || {
-            echo "Missing secret EC2_USER"
-            exit 1
-          }
-
-          test -n "$EC2_SSH_PRIVATE_KEY" || {
-            echo "Missing secret EC2_SSH_PRIVATE_KEY"
-            exit 1
-          }
-
-          test -n "$EXPECTED_EC2_INSTANCE_ID" || {
-            echo "Missing repository variable EC2_INSTANCE_ID"
-            exit 1
-          }
-
-          echo "Deployment configuration validated."
-
-      - name: Copy deployment files
+      - name: Copy deployment files to EC2
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -249,36 +194,27 @@ jobs:
           DOCKER_IMAGE: ${{ env.IMAGE_NAME }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
           EXPECTED_EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
-
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           command_timeout: 20m
           envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG,EXPECTED_EC2_INSTANCE_ID
-
           script: |
             set -Eeuo pipefail
-
             cd ~/monitorai-v22
 
-            echo "======================================"
-            echo "IDENTIFYING EC2 DEPLOYMENT TARGET"
-            echo "======================================"
-
+            echo "=== IDENTIFYING EC2 TARGET ==="
             TOKEN=$(curl -fsS --max-time 5 \
               -X PUT \
               -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
               http://169.254.169.254/latest/api/token)
-
             INSTANCE_ID=$(curl -fsS --max-time 5 \
               -H "X-aws-ec2-metadata-token: $TOKEN" \
               http://169.254.169.254/latest/meta-data/instance-id)
-
             REGION=$(curl -fsS --max-time 5 \
               -H "X-aws-ec2-metadata-token: $TOKEN" \
               http://169.254.169.254/latest/meta-data/placement/region)
-
             PRIVATE_IP=$(curl -fsS --max-time 5 \
               -H "X-aws-ec2-metadata-token: $TOKEN" \
               http://169.254.169.254/latest/meta-data/local-ipv4)
@@ -288,95 +224,72 @@ jobs:
             echo "Private IP: $PRIVATE_IP"
 
             if [ "$INSTANCE_ID" != "$EXPECTED_EC2_INSTANCE_ID" ]; then
-              echo "ERROR: EC2 instance ID does not match approved target."
+              echo "::error::EC2 instance ID does not match the approved target."
               exit 1
             fi
 
-            echo "EC2 target identity verified."
-
-            echo "======================================"
-            echo "PULLING DOCKER IMAGE"
-            echo "======================================"
-
+            echo "=== AUTHENTICATING TO GHCR ==="
             echo "$GHCR_TOKEN" | docker login ghcr.io \
               -u "$GHCR_USER" --password-stdin
-
             trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 
-            export IMAGE_TAG
-            export DOCKER_IMAGE
+            export IMAGE_TAG DOCKER_IMAGE
+            export COMPOSE_PROJECT_NAME=monitorai-v22
+            echo "Image to deploy: $DOCKER_IMAGE:$IMAGE_TAG"
 
-            echo "Image: $DOCKER_IMAGE:$IMAGE_TAG"
-
-            echo "======================================"
-            echo "DEPLOYING MONITORAI V2.2"
-            echo "======================================"
-
+            echo "=== DEPLOYING MONITORAI V2.2 ==="
+            # deploy.sh and docker-compose.yml must use DOCKER_IMAGE and IMAGE_TAG.
             bash deploy/deploy.sh
 
-            echo "======================================"
-            echo "VERIFYING RUNNING CONTAINERS"
-            echo "======================================"
-
-            export COMPOSE_PROJECT_NAME=monitorai-v22
-
+            echo "=== VERIFYING CONTAINERS ==="
             APP=$(docker compose ps -q app)
             DB=$(docker compose ps -q postgres)
-
             test -n "$APP"
             test -n "$DB"
 
             EXPECTED_IMAGE="$DOCKER_IMAGE:$IMAGE_TAG"
             ACTUAL_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$APP")
-
-            test "$ACTUAL_IMAGE" = "$EXPECTED_IMAGE"
-
-            echo "Running image: $ACTUAL_IMAGE"
+            if [ "$ACTUAL_IMAGE" != "$EXPECTED_IMAGE" ]; then
+              echo "Expected image: $EXPECTED_IMAGE"
+              echo "Actual image: $ACTUAL_IMAGE"
+              exit 1
+            fi
 
             APP_STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$APP")
             DB_STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$DB")
-
             test "$APP_STATUS" = "healthy"
             test "$DB_STATUS" = "healthy"
 
             echo "Application: $APP_STATUS"
             echo "Database: $DB_STATUS"
+            echo "Running image: $ACTUAL_IMAGE"
 
-            echo "======================================"
-            echo "VERIFYING DATABASE MIGRATIONS"
-            echo "======================================"
-
+            echo "=== VERIFYING DATABASE MIGRATIONS ==="
             docker compose exec -T app alembic heads
             docker compose exec -T app alembic current
 
-            echo "======================================"
-            echo "VERIFYING APPLICATION HEALTH"
-            echo "======================================"
-
+            echo "=== VERIFYING APPLICATION HEALTH ==="
             curl -fsS http://127.0.0.1:8003/health
+            echo
 
             API_STATUS=$(curl -sS -o /dev/null \
               -w '%{http_code}' \
               http://127.0.0.1:8003/api/auth/me)
-
             if [ "$API_STATUS" != "401" ] && [ "$API_STATUS" != "403" ]; then
               echo "Protected API returned unexpected status: $API_STATUS"
               exit 1
             fi
 
             echo "Protected API authentication check: $API_STATUS"
-
-            echo "======================================"
-            echo "DEPLOYMENT VERIFIED"
-            echo "======================================"
-
+            echo "=== DEPLOYMENT VERIFIED ==="
             echo "EC2 Instance: $INSTANCE_ID"
             echo "Region: $REGION"
+            echo "Private IP: $PRIVATE_IP"
             echo "Image: $ACTUAL_IMAGE"
-            echo "Migration and health checks completed."
 
       - name: Deployment summary
         if: success()
+        shell: bash
         run: |
           {
             echo "## MonitorAI V2.2 Deployment"
@@ -389,25 +302,19 @@ jobs:
             echo "- Port: \`127.0.0.1:8003\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # --------------------------------------------------
-  # 5. OPTIONAL BROWSER VERIFICATION
-  # Separate from deployment success
-  # --------------------------------------------------
-
   browser-verify:
     name: Browser Login and Workspace Verification
     needs: deploy
-
     if: >-
       needs.deploy.result == 'success' &&
+      github.event_name == 'workflow_dispatch' &&
       inputs.verify_browser == true
-
     runs-on: ubuntu-latest
-
+    # Browser verification also needs the Dev environment SSH secrets.
+    environment: Dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -418,10 +325,16 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          for name in EC2_HOST EC2_USER EC2_SSH_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing or unavailable Dev environment value: ${name}"
+              exit 1
+            fi
+          done
 
           WORK=$(mktemp -d)
           TUNNEL_PID=""
@@ -432,9 +345,7 @@ jobs:
             fi
             rm -rf "$WORK"
           }
-
           trap cleanup EXIT
-
           umask 077
 
           printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$WORK/key"
@@ -456,27 +367,35 @@ jobs:
           ssh "${SSH_OPTS[@]}" -NT \
             -L 8003:127.0.0.1:8003 \
             "$EC2_USER@$EC2_HOST" &
-
           TUNNEL_PID=$!
 
+          READY=false
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8003/health >/dev/null; then
+              READY=true
               break
             fi
             sleep 2
           done
 
+          if [ "$READY" != "true" ]; then
+            echo "Application did not become reachable through SSH tunnel."
+            exit 1
+          fi
+
           curl -fsS http://127.0.0.1:8003/health
+          echo
 
           npm install --no-audit --no-fund --no-save playwright-core@1.56.1
-
           cp deploy/browser-smoke.cjs "$WORK/"
-
           cd "$WORK"
-
           node browser-smoke.cjs
 
       - name: Browser verification summary
         if: always()
         run: |
-          echo "Browser verification result: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Browser verification"
+            echo ""
+            echo "- Result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
