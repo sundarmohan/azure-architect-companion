@@ -108,7 +108,7 @@ jobs:
     needs: [backend-test, frontend-test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
     runs-on: ubuntu-latest
-    environment: dev
+    environment: Dev
     permissions:
       contents: read
       packages: write
@@ -144,7 +144,7 @@ jobs:
     needs: build-and-push
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
     runs-on: ubuntu-latest
-    environment: dev
+    environment: Dev
     permissions:
       contents: read
       packages: read
@@ -170,7 +170,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           source: "docker-compose.yml,deploy/deploy.sh"
-          target: "/home/${{ secrets.EC2_USER }}/azure-architect-companion"
+          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22"
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1
@@ -187,34 +187,29 @@ jobs:
           envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG
           script: |
             set -e
-            cd ~/azure-architect-companion
+            cd ~/monitorai-v22
             # Short-lived job token: log in only for this pull, then log out
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
             export IMAGE_TAG DOCKER_IMAGE
             bash deploy/deploy.sh
 
-            docker compose ps
-            docker compose exec -T app alembic current
-
-            # End-to-end smoke checks against the running container
-            curl --fail --show-error --silent http://localhost:8001/health
-            curl --fail --show-error --silent -o /dev/null http://localhost:8001/
-            for path in api/architectures api/azure/resource-catalog api/settings/azure/status; do
-              code=$(curl --show-error --silent --output /dev/null --write-out '%{http_code}' "http://localhost:8001/$path")
-              if [ "$code" != 401 ]; then
-                echo "Expected HTTP 401 for unauthenticated GET /$path, received $code" >&2
-                exit 1
-              fi
-            done
-            docker compose logs --tail=100 app
-
-      - name: Verify public accessibility
-        continue-on-error: true
+      - name: Verify the deployed login and workspaces in Chromium
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
         run: |
-          for path in health api/architectures ""; do
-            code=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "http://$EC2_HOST:8001/$path" || true)
-            echo "::notice title=Public check::GET :8001/$path -> HTTP $code"
-          done
+          set -eu
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          umask 077
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$work/key"
+          unset EC2_SSH_PRIVATE_KEY
+          ssh_opts=(-i "$work/key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$work/known_hosts" -o ConnectTimeout=15)
+          ssh "${ssh_opts[@]}" "$EC2_USER@$EC2_HOST" 'grep -E "^MONITORAI_BOOTSTRAP_(USERNAME|PASSWORD)=" ~/monitorai-v22/.env' > "$work/bootstrap"
+          ssh "${ssh_opts[@]}" -fNT -o ExitOnForwardFailure=yes -L 8003:127.0.0.1:8003 "$EC2_USER@$EC2_HOST"
+          cd "$work"
+          npm install --no-audit --no-fund --no-save playwright-core@1.56.1
+          cp "$GITHUB_WORKSPACE/deploy/browser-smoke.cjs" .
+          node browser-smoke.cjs

@@ -1,123 +1,37 @@
 #!/bin/bash
+set -euo pipefail
+umask 077
+cd "${DEPLOYMENT_DIR:-.}"
+export COMPOSE_PROJECT_NAME=monitorai-v22
 
-# MonitorAI V2.2 - EC2 Deployment Script
-# This script pulls the latest Docker image and deploys using docker-compose
-
-set -e  # Exit on any error
-
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Configuration
-DEPLOYMENT_DIR="${DEPLOYMENT_DIR:-.}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-DOCKER_REGISTRY="ghcr.io/sundarmohan"
-IMAGE_NAME="azure-architect-companion"
-MAX_RETRIES=30
-RETRY_INTERVAL=4
-
-echo -e "${YELLOW}=== MonitorAI V2.2 Deployment ===${NC}"
-echo "Image Tag: $IMAGE_TAG"
-echo "Deployment Directory: $DEPLOYMENT_DIR"
-echo ""
-
-# Check if docker is available
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}Error: Docker is not installed${NC}"
-    exit 1
-fi
-
-# Check if Docker Compose is available
-if ! docker compose version &> /dev/null; then
-    echo -e "${RED}Error: Docker Compose is not installed${NC}"
-    exit 1
-fi
-
-# Check if docker-compose.yml exists
-if [ ! -f "$DEPLOYMENT_DIR/docker-compose.yml" ]; then
-    echo -e "${RED}Error: docker-compose.yml not found in $DEPLOYMENT_DIR${NC}"
-    exit 1
-fi
-
-# .env is optional: docker-compose.yml provides defaults for every variable
-if [ ! -f "$DEPLOYMENT_DIR/.env" ]; then
-    echo -e "${YELLOW}Warning: .env not found in $DEPLOYMENT_DIR; using docker-compose defaults${NC}"
-    touch "$DEPLOYMENT_DIR/.env"
-fi
-
-# The database password is required. If the server's .env has none yet, generate a
-# random one once and persist it there (owner-only). It is never printed.
-if ! grep -qE '^POSTGRES_PASSWORD=.+' "$DEPLOYMENT_DIR/.env"; then
-    echo -e "${YELLOW}POSTGRES_PASSWORD not set in .env; generating one${NC}"
-    printf '\nPOSTGRES_PASSWORD=%s\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$DEPLOYMENT_DIR/.env"
-fi
-chmod 600 "$DEPLOYMENT_DIR/.env"
-
-cd "$DEPLOYMENT_DIR"
-
-echo -e "${YELLOW}Step 1: Pulling Docker images${NC}"
-if docker compose pull; then
-    echo -e "${GREEN}✓ Image pulled successfully${NC}"
-else
-    echo -e "${RED}✗ Failed to pull image${NC}"
-    exit 1
-fi
-
-echo ""
-echo -e "${YELLOW}Step 2: Starting application with database migration${NC}"
-if docker compose up -d --remove-orphans; then
-    echo -e "${GREEN}✓ Containers started${NC}"
-else
-    echo -e "${RED}✗ Failed to start containers${NC}"
-    docker compose logs
-    exit 1
-fi
-
-echo ""
-echo -e "${YELLOW}Step 3: Waiting for application to be ready${NC}"
-
-# Wait for application to be ready
-RETRY_COUNT=0
-HEALTH_CHECK_URL="http://localhost:8001/health"
-
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    echo -n "Checking health... "
-    
-    if curl -f -s "$HEALTH_CHECK_URL" > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Application is ready${NC}"
-        break
-    else
-        RETRY_COUNT=$((RETRY_COUNT + 1))
-        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-            echo -e "${YELLOW}Retry $RETRY_COUNT/$MAX_RETRIES${NC}"
-            sleep $RETRY_INTERVAL
-        fi
+if [ ! -e .env ]; then
+    if docker volume inspect monitorai-v22_monitorai_pg_data >/dev/null 2>&1; then
+        echo "Existing V2.2 database requires its original .env" >&2
+        exit 1
     fi
-done
-
-if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-    echo -e "${RED}✗ Application health check failed${NC}"
-    echo ""
-    echo "Container logs:"
-    docker compose logs app
-    echo ""
-    docker compose logs postgres
-    exit 1
+    {
+        printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+        printf 'MONITORAI_BOOTSTRAP_USERNAME=monitorai-admin\n'
+        printf 'MONITORAI_BOOTSTRAP_PASSWORD=%s\n' "$(openssl rand -hex 24)"
+        printf 'MONITORAI_AZURE_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32 | tr '+/' '-_')"
+    } > .env.new
+    mv .env.new .env
 fi
+chmod 600 .env
 
-echo ""
-echo -e "${GREEN}=== Deployment Successful ===${NC}"
-echo "Application is running at http://localhost:8001"
-echo "Health check: $HEALTH_CHECK_URL"
-echo ""
-echo "Useful commands:"
-echo "  docker compose ps              # Check container status"
-echo "  docker compose logs app        # View application logs"
-echo "  docker compose logs postgres   # View database logs"
-echo "  docker compose restart         # Restart containers"
-echo ""
-
-exit 0
+docker compose pull
+docker compose up -d --wait --wait-timeout 180
+test "$(docker compose port app 8000)" = 127.0.0.1:8003
+app=$(docker compose ps -q app)
+postgres=$(docker compose ps -q postgres)
+test "$(docker inspect --format '{{.Config.Image}}' "$app")" = "$DOCKER_IMAGE:$IMAGE_TAG"
+test "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$postgres")" = monitorai-v22_monitorai_pg_data
+docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT 1"' | grep -Fx 1
+revision=$(docker compose exec -T app alembic heads | awk '{print $1}')
+test -n "$revision"
+docker compose exec -T app alembic current | grep -Fx "$revision (head)"
+docker compose ps
+curl -fsS http://127.0.0.1:8003/health
+for path in auth/me architectures azure/resource-catalog assessments; do
+    test "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8003/api/$path")" = 401
+done
