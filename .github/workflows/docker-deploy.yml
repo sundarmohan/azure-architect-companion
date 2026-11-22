@@ -1,10 +1,18 @@
-name: MonitorAI public ingress preflight
+name: Provision MonitorAI HTTPS ingress
 on: workflow_dispatch
 jobs:
-  inspect:
+  ingress:
     runs-on: ubuntu-latest
     environment: Dev
     steps:
+      - uses: actions/checkout@v4
+      - uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          source: deploy/configure-ingress.sh
+          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22"
       - uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -12,26 +20,16 @@ jobs:
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           script: |
             set -eu
-            for port in 80 443 8003; do
-              echo "Local TCP port $port:"
-              ss -ltnpH "sport = :$port" | awk '{print $4, $6}'
-            done
-            for binary in nginx caddy; do
-              if command -v "$binary" >/dev/null; then echo "$binary installed"; fi
-              if systemctl is-active --quiet "$binary"; then echo "$binary active"; fi
-            done
-            if sudo -n true 2>/dev/null; then echo "Non-interactive sudo available"; fi
-            if command -v aws >/dev/null; then echo "AWS CLI available on EC2"; fi
-            echo "Container port bindings (images and ports only)"
-            docker ps --format '{{.Image}} {{.Ports}}'
-            caddy=$(docker ps --filter ancestor=caddy:2.10.2-alpine -q)
-            docker inspect --format '{{.Name}} {{.HostConfig.NetworkMode}}{{range .Mounts}} {{.Destination}}={{.Source}}{{end}}' "$caddy"
-            docker exec "$caddy" caddy version
-            docker exec "$caddy" caddy adapt --config /etc/caddy/Caddyfile 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(s.get("listen"),[(r.get("match"),[h.get("handler") for h in r.get("handle",[])]) for r in s.get("routes",[])]) for s in d["apps"]["http"]["servers"].values()])'
-      - name: Check existing public transport
-        env:
-          HOST: ${{ secrets.EC2_HOST }}
+            token=$(curl -fsS --max-time 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+            address=$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/public-ipv4)
+            test "$address" = 98.130.117.140
+            export MONITORAI_PUBLIC_HOST="$address"
+            cd ~/monitorai-v22
+            bash deploy/configure-ingress.sh
+      - name: Verify certificate and health externally
         run: |
-          for scheme in http https; do
-            echo "$scheme status $(curl --max-time 8 -s -o /dev/null -w '%{http_code}' "$scheme://$HOST/" || true)"
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 5 https://98.130.117.140/health; then exit 0; fi
+            sleep 4
           done
+          exit 1
