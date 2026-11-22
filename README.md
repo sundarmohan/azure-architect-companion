@@ -56,7 +56,7 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 | --- | --- | --- |
 | 1 · Identity and clients | Local accounts, tenant membership, role guards, and audit event storage in `backend/app/domains/access/`. | Account now shows recent client or platform audit activity, scoped by administrator role. CI covers tenant isolation. |
 | 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Design Details now compares top-level resources in a mapped subscription with its latest completed inventory, including missing, ambiguous, and stale results. Child resources need a separate matching model. |
-| 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Connect observation evidence to alerts and verify supported metrics against a configured Azure subscription. |
+| 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Monitoring exposes resource health evidence for triage. Persisted alert acknowledgement and live Azure validation remain open. |
 | 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Carry qualified evidence into incident investigation and retain the link back to the original finding. |
 | 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Connect Azure and imported findings to vulnerability ownership, SLA, and risk acceptance records. |
 | 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Map observed evidence to versioned controls and add manual review, corrective action, and assessment history. Design checks remain evidence for the controls they actually cover. |
@@ -156,6 +156,19 @@ Observations show when the latest attempt and successful collection occurred.
 The UI identifies deliberately retained earlier data after a failed collection.
 Client credentials and subscriptions determine collection scope. All provider
 calls are read-only.
+
+### Resource health triage
+
+Open Monitoring and select a subscription with a saved observation. The
+triage view uses confirmed Degraded and Unavailable responses from Azure
+Resource Health. Open a listed resource to inspect its collected health and
+metrics. An earlier snapshot retained after a failed refresh is identified
+as historical evidence. Unsupported and inconclusive health readings leave
+coverage incomplete.
+
+Development and CI use mocked Azure responses. For live validation, configure
+a read-only connection for the intended validation subscription in MonitorAI
+under Azure Connection, then refresh Azure Inventory and Monitoring.
 
 ### Advanced Diagnostics
 

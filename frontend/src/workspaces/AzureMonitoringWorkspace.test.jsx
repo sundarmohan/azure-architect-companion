@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AzureMonitoringWorkspace from "./AzureMonitoringWorkspace";
 import {
@@ -33,7 +33,7 @@ function snapshot(name, extra = {}) {
       type: "Microsoft.Compute/virtualMachines",
       location: "eastus",
       health: "available",
-      health_status: "available",
+      health_status: "synced",
       metrics_status: "available",
       metrics: [{ name: "Percentage CPU", unit: "Percent", points: [{ timestamp: "2026-11-01T00:00:00Z", value: 0 }] }],
     }],
@@ -47,6 +47,61 @@ beforeEach(() => {
 });
 
 describe("Azure monitoring workspace", () => {
+  it("triages only confirmed Azure health issues and opens the matching resource", async () => {
+    getAzureMonitoring.mockResolvedValue(snapshot("vm-available", {
+      resources: [
+        { id: "a", name: "vm-available", health_status: "synced", health: "available" },
+        { id: "b", name: "vm-degraded", health_status: "synced", health: "degraded" },
+        { id: "c", name: "vm-unavailable", health_status: "synced", health: "unavailable" },
+        { id: "d", name: "vm-unknown", health_status: "synced", health: "unknown" },
+        { id: "e", name: "vm-unconfirmed", health_status: "permission_failure", health: "degraded" },
+      ],
+    }));
+    render(<AzureMonitoringWorkspace />);
+
+    const triage = within(await screen.findByRole("table", { name: "Confirmed Azure resource health issues" }));
+    expect(triage.getByRole("button", { name: "Review vm-degraded" })).toBeInTheDocument();
+    expect(triage.queryByRole("button", { name: "Review vm-available" })).not.toBeInTheDocument();
+    expect(triage.queryByRole("button", { name: "Review vm-unknown" })).not.toBeInTheDocument();
+    expect(triage.queryByRole("button", { name: "Review vm-unconfirmed" })).not.toBeInTheDocument();
+    expect(screen.getByText(/confirmed the state of 3 of 5 sampled resources/)).toBeInTheDocument();
+
+    const filter = screen.getByLabelText("Filter monitored resources");
+    fireEvent.change(filter, { target: { value: "vm-available" } });
+    fireEvent.click(triage.getByRole("button", { name: "Review vm-unavailable" }));
+    expect(filter).toHaveValue("");
+    expect(screen.getByRole("heading", { name: /Resource health and metrics/ })).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "vm-unavailable" })).toBeInTheDocument();
+  });
+
+  it("distinguishes retained, incomplete, and unconfirmed evidence", async () => {
+    const issues = [{ id: "vm", name: "vm", health_status: "synced", health: "degraded" }];
+    getAzureMonitoring.mockResolvedValue(snapshot("vm", {
+      status: "partial_failure",
+      last_attempt_at: "2026-11-01T02:00:00Z",
+      resources: issues,
+    }));
+    refreshAzureMonitoring.mockResolvedValueOnce(snapshot("vm", {
+      status: "partial_failure",
+      last_success_at: null,
+      last_attempt_at: "2026-11-01T03:00:00Z",
+      resources: issues,
+    })).mockResolvedValueOnce(snapshot("vm", {
+      resources: [{ ...issues[0], health: "unknown" }],
+    }));
+    render(<AzureMonitoringWorkspace canRefresh />);
+
+    expect(await screen.findByText(/Retained evidence from/)).toHaveTextContent(/latest collection did not complete/);
+    expect(screen.getByRole("button", { name: "Review vm" })).toBeInTheDocument();
+    const refresh = screen.getByRole("button", { name: "Refresh snapshot" });
+    fireEvent.click(refresh);
+    expect(await screen.findByText(/Incomplete evidence from the collection attempted at/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review vm" })).toBeInTheDocument();
+    fireEvent.click(refresh);
+    expect(await screen.findByText("No confirmed resource health evidence is available.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review vm" })).not.toBeInTheDocument();
+  });
+
   it("switches subscriptions without displaying a late response from the earlier selection", async () => {
     let finishEarlier;
     getAzureMonitoring.mockImplementation((id) => {

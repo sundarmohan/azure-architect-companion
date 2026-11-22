@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getAzureMonitoring,
   getAzureMonitoringSchedule,
@@ -51,9 +51,40 @@ function MetricSeries({ metric }) {
   </details>;
 }
 
+function HealthTriage({ snapshot, resources, onSelect }) {
+  const confirmed = resources.filter((resource) => resource.health_status === "synced" &&
+    ["available", "degraded", "unavailable"].includes(resource.health));
+  const findings = confirmed.filter((resource) => resource.health !== "available");
+  const retained = snapshot.status !== "synced" && Boolean(snapshot.last_success_at);
+
+  return <section className="card account-form">
+    <h2>Resource health triage</h2>
+    {retained
+      ? <p>Retained evidence from {snapshotTime(snapshot.last_success_at)}. The latest collection did not complete.</p>
+      : snapshot.status === "partial_failure"
+        ? <p>Incomplete evidence from the collection attempted at {snapshotTime(snapshot.last_attempt_at)}.</p>
+        : snapshot.status === "synced" && <p>Snapshot collected {snapshotTime(snapshot.last_success_at)}.</p>}
+    {resources.length > 0 && <p>Azure Resource Health confirmed the state of {confirmed.length} of {resources.length} sampled resources.</p>}
+    {findings.length > 0 ? <div className="design-table">
+      <table className="table" aria-label="Confirmed Azure resource health issues">
+        <thead><tr><th scope="col">Resource</th><th scope="col">Reported health</th><th scope="col">Location</th></tr></thead>
+        <tbody>{findings.map((resource) => <tr key={resource.id}>
+          <td><button type="button" className="dismiss" onClick={() => onSelect(resource.id)}>
+            Review {resource.name || resource.id}
+          </button></td>
+          <td>{displayLabel(resource.health)}</td>
+          <td>{resource.location || "Unknown"}</td>
+        </tr>)}</tbody>
+      </table>
+    </div> : <p>{confirmed.length ? "No degraded or unavailable resources in the confirmed evidence."
+      : "No confirmed resource health evidence is available."}</p>}
+  </section>;
+}
+
 function MonitoringResources({ snapshot }) {
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const detailsHeading = useRef(null);
   const resources = snapshot.resources || [];
   const query = filter.trim().toLowerCase();
   const matching = useMemo(() => resources.filter((resource) => !query ||
@@ -61,28 +92,35 @@ function MonitoringResources({ snapshot }) {
       value?.toLowerCase().includes(query))), [query, resources]);
   const selected = matching.find(({ id }) => id === selectedId) || matching[0];
 
-  return <section className="card account-form">
-    <h2>Resource health and metrics ({resources.length})</h2>
-    {snapshot.limitations?.length > 0 && <ul>{snapshot.limitations.map((item) => <li key={item}>{item}</li>)}</ul>}
-    {resources.length > 0 && <label>Filter monitored resources<input value={filter}
-      onChange={(event) => setFilter(event.target.value)} placeholder="Name, resource type, location, or health" /></label>}
-    {matching.length > 0 && <label>Resource<select value={selected.id} onChange={(event) => setSelectedId(event.target.value)}>
-      {matching.map((resource) => <option key={resource.id} value={resource.id}>{resource.name} · {displayLabel(resource.health)}</option>)}
-    </select></label>}
-    {selected ? <div className="account-form">
-      <h3>{selected.name}</h3>
-      <dl className="design-meta">
-        <div><dt>Resource type</dt><dd>{selected.type || "Unknown"}</dd></div>
-        <div><dt>Location</dt><dd>{selected.location || "Unknown"}</dd></div>
-        <div><dt>Azure Resource Health</dt><dd>{displayLabel(selected.health)}</dd></div>
-        {selected.health_status && <div><dt>Health collection</dt><dd>{displayLabel(selected.health_status)}</dd></div>}
-        {selected.metrics_status && <div><dt>Metrics collection</dt><dd>{displayLabel(selected.metrics_status)}</dd></div>}
-      </dl>
-      {selected.metrics?.length ? <div className="account-form" key={selected.id}>{selected.metrics.map((metric) =>
-        <MetricSeries key={`${metric.name}-${metric.aggregation || ""}`} metric={metric} />)}</div>
-        : <p>No metrics were returned for this resource.</p>}
-    </div> : <p>{resources.length ? "No resources match the filter." : "No monitoring data has been collected."}</p>}
-  </section>;
+  return <>
+    <HealthTriage snapshot={snapshot} resources={resources} onSelect={(id) => {
+      setFilter("");
+      setSelectedId(id);
+      detailsHeading.current?.focus();
+    }} />
+    <section className="card account-form">
+      <h2 ref={detailsHeading} tabIndex={-1}>Resource health and metrics ({resources.length})</h2>
+      {snapshot.limitations?.length > 0 && <ul>{snapshot.limitations.map((item) => <li key={item}>{item}</li>)}</ul>}
+      {resources.length > 0 && <label>Filter monitored resources<input value={filter}
+        onChange={(event) => setFilter(event.target.value)} placeholder="Name, resource type, location, or health" /></label>}
+      {matching.length > 0 && <label>Resource<select value={selected.id} onChange={(event) => setSelectedId(event.target.value)}>
+        {matching.map((resource) => <option key={resource.id} value={resource.id}>{resource.name} · {displayLabel(resource.health)}</option>)}
+      </select></label>}
+      {selected ? <div className="account-form">
+        <h3>{selected.name}</h3>
+        <dl className="design-meta">
+          <div><dt>Resource type</dt><dd>{selected.type || "Unknown"}</dd></div>
+          <div><dt>Location</dt><dd>{selected.location || "Unknown"}</dd></div>
+          <div><dt>Azure Resource Health</dt><dd>{displayLabel(selected.health)}</dd></div>
+          {selected.health_status && <div><dt>Health collection</dt><dd>{displayLabel(selected.health_status)}</dd></div>}
+          {selected.metrics_status && <div><dt>Metrics collection</dt><dd>{displayLabel(selected.metrics_status)}</dd></div>}
+        </dl>
+        {selected.metrics?.length ? <div className="account-form" key={selected.id}>{selected.metrics.map((metric) =>
+          <MetricSeries key={`${metric.name}-${metric.aggregation || ""}`} metric={metric} />)}</div>
+          : <p>No metrics were returned for this resource.</p>}
+      </div> : <p>{resources.length ? "No resources match the filter." : "No monitoring data has been collected."}</p>}
+    </section>
+  </>;
 }
 
 function MonitoringSchedule({ subscription }) {
