@@ -14,8 +14,11 @@ trap 'docker exec "$proxy" rm -f "$staged" >/dev/null 2>&1 || true; rm -rf "$wor
 sudo -n cat "$source" > "$work/original"
 if grep -Fxq '# BEGIN MONITORAI V2.2' "$work/original"; then
     grep -Fxq "https://$MONITORAI_PUBLIC_HOST {" "$work/original"
-    exit
+    owned=true
+else
+    owned=false
 fi
+if [[ "$owned" == false ]]; then
 docker exec "$proxy" caddy adapt --config /etc/caddy/Caddyfile 2>/dev/null |
     python3 -c 'import fnmatch,json,sys
 host=sys.argv[1]
@@ -26,7 +29,32 @@ for server in servers.values():
             if any(fnmatch.fnmatchcase(host, name) for name in match.get("host", [])):
                 raise SystemExit("Host already belongs to an existing Caddy route")' "$MONITORAI_PUBLIC_HOST"
 
-cp "$work/original" "$work/updated"
+fi
+
+python3 - "$work/original" "$work/updated" "$MONITORAI_PUBLIC_HOST" <<'PY'
+import ipaddress
+import pathlib
+import re
+import sys
+
+source, target, host = sys.argv[1:]
+config = pathlib.Path(source).read_text()
+config = re.sub(r"(?ms)^# BEGIN MONITORAI V2\.2\n.*?^# END MONITORAI V2\.2\n?", "", config)
+try:
+    ipaddress.IPv4Address(host)
+except ipaddress.AddressValueError:
+    pass
+else:
+    setting = f"default_sni {host}"
+    directives = re.findall(r"(?m)^\s*default_sni\s+([^\s#]+)", config)
+    if directives and directives != [host]:
+        raise SystemExit("An existing TLS default owns clients without SNI")
+    if not directives:
+        config, count = re.subn(r"(?m)^\{\s*$", "{\n    " + setting, config, count=1)
+        if not count:
+            config = "{\n    " + setting + "\n}\n\n" + config
+pathlib.Path(target).write_text(config.rstrip() + "\n")
+PY
 {
     printf '\n# BEGIN MONITORAI V2.2\nhttps://%s {\n' "$MONITORAI_PUBLIC_HOST"
     if [[ "$MONITORAI_PUBLIC_HOST" =~ ^[0-9.]+$ ]]; then
@@ -34,6 +62,8 @@ cp "$work/original" "$work/updated"
     fi
     printf '    reverse_proxy 127.0.0.1:8003\n}\n# END MONITORAI V2.2\n'
 } >> "$work/updated"
+
+if cmp -s "$work/original" "$work/updated"; then exit 0; fi
 
 docker exec -i "$proxy" sh -c 'umask 077; cat > "$1"' sh "$staged" < "$work/updated"
 docker exec "$proxy" caddy validate --adapter caddyfile --config "$staged"
