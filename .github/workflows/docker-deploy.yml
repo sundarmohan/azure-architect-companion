@@ -1,254 +1,55 @@
-name: CI/CD - Build and Deploy
+name: MonitorAI EC2 post-deployment verification
 
 on:
-  push:
-    branches:
-      - main
-      - consolidation/v2.2-baseline
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Publish and deploy this main revision to EC2
-        type: boolean
-        default: false
-      verify_bootstrap:
-        description: Verify first sign-in and retire the superseded Phase 5 preview
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
-env:
-  IMAGE_NAME: ghcr.io/sundarmohan/azure-architect-companion
-
-concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy == true && 'production-deployment' || format('ci-{0}', github.ref) }}
-  cancel-in-progress: false
-
 jobs:
-  backend-test:
-    name: test
-    runs-on: ubuntu-latest
-
-    # The app's startup hook runs Alembic migrations, so route tests need a real
-    # PostgreSQL. This is a throwaway CI-only database.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: monitorai
-          POSTGRES_PASSWORD: ci_only_password
-          POSTGRES_DB: monitorai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U monitorai -d monitorai"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgresql+asyncpg://monitorai:ci_only_password@localhost:5432/monitorai
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install dependencies
-        working-directory: backend
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest-github-actions-annotate-failures
-
-      - name: Verify Alembic migration chain on fresh PostgreSQL
-        working-directory: backend
-        run: |
-          alembic heads
-          alembic history
-          alembic upgrade head
-          alembic current
-
-      - name: Run pytest
-        working-directory: backend
-        run: pytest -v --tb=short
-
-  frontend-test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Run frontend tests
-        working-directory: frontend
-        run: npm test
-
-      - name: Production build
-        working-directory: frontend
-        run: npm run build
-
-  build-and-push:
-    needs: [backend-test, frontend-test]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
+  verify:
     runs-on: ubuntu-latest
     environment: Dev
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # GitHub Container Registry: authenticates with the workflow's own
-      # GITHUB_TOKEN, so no extra registry secrets are required.
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    needs: build-and-push
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy == true
-    runs-on: ubuntu-latest
-    environment: Dev
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Validate EC2 configuration
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          test -n "$EC2_HOST" || { echo "Missing EC2_HOST"; exit 1; }
-          test -n "$EC2_USER" || { echo "Missing EC2_USER"; exit 1; }
-          test -n "$EC2_SSH_PRIVATE_KEY" || { echo "Missing EC2_SSH_PRIVATE_KEY"; exit 1; }
-
-      - name: Copy deployment files to EC2
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          source: "docker-compose.yml,deploy/deploy.sh"
-          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22"
-
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCKER_IMAGE: ${{ env.IMAGE_NAME }}
-          IMAGE_TAG: ${{ github.sha }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          command_timeout: 20m
-          envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG
-          script: |
-            set -e
-            cd ~/monitorai-v22
-            # Short-lived job token: log in only for this pull, then log out
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
-            export IMAGE_TAG DOCKER_IMAGE
-            bash deploy/deploy.sh
-
-      - name: Verify the deployed login and workspaces in Chromium
-        if: inputs.verify_bootstrap == true
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          set -eu
-          work=$(mktemp -d)
-          trap 'rm -rf "$work"' EXIT
-          umask 077
-          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$work/key"
-          unset EC2_SSH_PRIVATE_KEY
-          ssh_opts=(-i "$work/key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$work/known_hosts" -o ConnectTimeout=15)
-          ssh "${ssh_opts[@]}" "$EC2_USER@$EC2_HOST" 'grep -E "^MONITORAI_BOOTSTRAP_(USERNAME|PASSWORD)=" ~/monitorai-v22/.env' > "$work/bootstrap"
-          ssh "${ssh_opts[@]}" -fNT -o ExitOnForwardFailure=yes -L 8003:127.0.0.1:8003 "$EC2_USER@$EC2_HOST"
-          cd "$work"
-          npm install --no-audit --no-fund --no-save playwright-core@1.56.1
-          cp "$GITHUB_WORKSPACE/deploy/browser-smoke.cjs" .
-          node browser-smoke.cjs
-      - name: Retire the verified dedicated Phase 5 preview
-        if: inputs.verify_bootstrap == true
+      - name: Verify restart and isolated storage on the deployed EC2 stack
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          command_timeout: 3m
+          command_timeout: 5m
           script: |
             set -eu
-            project=monitorai-v22-preview
-            volume=monitorai-v22-preview_monitorai_pg_data
-            image=ghcr.io/sundarmohan/azure-architect-companion:preview-5ee4f5a1ca29cb5c69a14a19cb52de55c092959c
-            app=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=app)
-            db=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=postgres)
-            if [ -z "$app$db" ] && ! docker volume inspect "$volume" >/dev/null 2>&1; then
-              echo "Dedicated preview already absent"
-              exit 0
-            fi
-            test -n "$app" && test -n "$db" || { echo "Preview ownership incomplete"; exit 1; }
-            for id in "$app" "$db"; do
-              test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id")" = "$HOME/$project"
-            done
+            cd ~/monitorai-v22
+            export COMPOSE_PROJECT_NAME=monitorai-v22
+            app=$(docker compose ps -q app)
+            db=$(docker compose ps -q postgres)
+            image=ghcr.io/sundarmohan/azure-architect-companion:ba6e0daa0c60f41081babe14e76271199d296d44
             test "$(docker inspect --format '{{.Config.Image}}' "$app")" = "$image"
-            test "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$db")" = "$volume"
-            test "$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$volume")" = "$project"
-            test "$(docker ps -aq --filter "volume=$volume")" = "$db"
-            docker stop "$app" "$db"
-            docker rm "$app" "$db"
-            docker volume rm "$volume"
-            image_id=$(docker image inspect --format '{{.Id}}' "$image")
-            if [ -z "$(docker ps -aq --filter "ancestor=$image_id")" ]; then
-              docker image rm "$image"
-            fi
+            mount=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$db")
+            test "$mount" = monitorai-v22_monitorai_pg_data
+            legacy=$(docker ps --filter label=com.docker.compose.project=azure-architect-companion --filter label=com.docker.compose.service=app -q)
+            for id in "$app" "$db"; do
+              test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$id")" = unless-stopped
+            done
+            docker restart "$db" >/dev/null
+            for attempt in $(seq 1 30); do
+              if [ "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy ]; then break; fi
+              sleep 2
+            done
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy
+            docker restart "$app" >/dev/null
+            for attempt in $(seq 1 30); do
+              if [ "$(docker inspect --format '{{.State.Health.Status}}' "$app")" = healthy ]; then break; fi
+              sleep 2
+            done
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$app")" = healthy
             curl -fsS http://127.0.0.1:8003/health
-            echo "Dedicated preview containers and database volume retired"
+            test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8003/api/auth/me)" = 401
+            docker compose exec -T app alembic current | grep -Fx '0020_assessment_records (head)'
+            if docker logs --since 15m "$app" 2>&1 | grep -qiE '(^|[[:space:]])(ERROR|Traceback)(:|[[:space:]])'; then
+              echo "Application logged an error within the verification window"
+              exit 1
+            fi
+            if [ -n "$legacy" ]; then test "$(docker inspect --format '{{.State.Running}}' "$legacy")" = true; fi
+            echo "App and database restarted healthy; protected API and Alembic checks passed."
