@@ -55,7 +55,7 @@ async function verify() {
       await button.click();
       await navigation.locator(".active").filter({ hasText: label }).waitFor();
     stage = `render the ${label} workspace`;
-      await page.locator("main.app-main .workspace-panel :is(h1, h2, label, button):visible").first().waitFor();
+      await page.locator("main.app-main .workspace-panel :is(h1, h2, p, label, button):visible").first().waitFor();
       console.log(`Workspace rendered: ${label}`);
     }
     await page.getByRole("button", { name: "Sign out" }).click();
