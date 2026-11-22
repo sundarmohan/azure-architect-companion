@@ -12,6 +12,7 @@ import {
   saveDesignRevision,
   transitionArchitecture,
 } from "../services/api";
+import DesignInventoryComparison from "./DesignInventoryComparison";
 
 const DESIGN_STATUS = {
   draft: "Draft",
@@ -295,6 +296,8 @@ export default function DesignDetails({ design, canEdit, canApprove, onBack, onO
         </form>}
       </section>}
     </section>
+
+    <DesignInventoryComparison key={design.id} designId={design.id} />
 
     {canEdit && <section className="card account-form">
       <h2>Planned cost</h2>

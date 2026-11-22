@@ -54,8 +54,8 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 
 | Phase | Working foundation to reuse | Gap to close |
 | --- | --- | --- |
-| 1 · Identity and clients | Local accounts, tenant membership, role guards, and audit event storage in `backend/app/domains/access/`. | Account now shows recent client or platform audit activity, scoped by administrator role. Verify tenant isolation in CI. |
-| 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Connect design review to observed inventory using the subscription, resource group, and ARM identity already available. Handle missing and ambiguous mappings explicitly. |
+| 1 · Identity and clients | Local accounts, tenant membership, role guards, and audit event storage in `backend/app/domains/access/`. | Account now shows recent client or platform audit activity, scoped by administrator role. CI covers tenant isolation. |
+| 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Design Details now compares top-level resources in a mapped subscription with its latest completed inventory, including missing, ambiguous, and stale results. Child resources need a separate matching model. |
 | 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Connect observation evidence to alerts and verify supported metrics against a configured Azure subscription. |
 | 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Carry qualified evidence into incident investigation and retain the link back to the original finding. |
 | 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Connect Azure and imported findings to vulnerability ownership, SLA, and risk acceptance records. |
