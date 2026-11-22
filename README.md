@@ -59,7 +59,7 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 | 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Monitoring exposes resource health evidence for triage. Persisted alert acknowledgement and live Azure validation remain open. |
 | 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Triage remediation by tracking status in the current evidence snapshot. Linking findings to incident investigations remains open. |
 | 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Review imported findings across assessments and related Defender evidence for a configured subscription. Policy SLAs and risk acceptance records remain open. |
-| 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Map observed evidence to versioned controls and add manual review, corrective action, and assessment history. Design checks remain evidence for the controls they actually cover. |
+| 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Compliance reviews saved Azure findings by technical control area. Versioned framework mappings, recorded reviews, corrective actions, and assessment history remain open. |
 | 7 · DevSecOps, alerts, and incidents | `monitoring/alert_incident_workflow.py` and `incidents/` contain persisted alert and incident building blocks. | Secure the workflows with current client scope, connect evidence, and add assignment, RCA, and read-only GitHub metadata ingestion. |
 | 8 · Cost and recovery | `backend/app/domains/cost/` includes design estimates and Azure Cost Management parsing. | Scope actual costs to current client connections, then add budget and anomaly tracking plus backup and restore evidence. |
 | 9 · Reports and validation | `backend/app/domains/reports/` and existing report and dashboard workspaces provide reusable presentation and aggregation logic. | Authorize reports by client and derive summaries from persisted evidence. Complete integrated workflow validation. |
@@ -77,7 +77,7 @@ responses.
 This is a source and CI inventory for the development branch. An active
 workflow requires a reachable screen or API, client authorization, and usable
 underlying behavior. A working core can still have coverage and live validation
-gaps. Six modules have a working core, four are partial, four have reusable code
+gaps. Six modules have a working core, five are partial, three have reusable code
 awaiting integration, and two lack an active integration. These counts describe
 module breadth rather than percent complete.
 
@@ -93,12 +93,24 @@ module breadth rather than percent complete.
 | 8 | Vulnerability Management | Partial | Sanitized scanner-result imports, deduplication, severity, ownership, due dates, and remediation tracking already work. The portfolio brings these records together and includes related Defender evidence. Policy SLAs and risk acceptance remain open. |
 | 9 | Threat Detection | Partial | Selected Azure Activity patterns and Defender alerts are displayed. Broader event correlation and incident investigations remain open. |
 | 10 | DevSecOps | Missing integration | Read-only GitHub and pipeline evidence ingestion, plus dependency, image, secret, and IaC finding workflows, remain open. |
-| 11 | Compliance Engine | Reusable code | Consolidated governance code has limited design checks. Live control mapping, evidence, review, and corrective actions across the four frameworks remain open. |
+| 11 | Compliance Engine | Partial | The active Compliance workspace reviews saved Azure technical evidence. Framework control catalogs, recorded review, corrective actions, and reporting remain open. |
 | 12 | Alerts & Incidents | Reusable code | Models and `MonitoringAlertIncidentWorkflow` already exist, with older alert and incident handlers. Active routes gate those handlers. Current client-scoped evidence, triage, RCA, and corrective actions still need integration. |
 | 13 | Cost Management | Partial | Design cost estimation is active. The Azure Cost Management adapter is reusable for actual costs. Current tenant connection, budgets, anomalies, and optimization remain open. |
 | 14 | Backup & DR | Missing integration | Read-only backup jobs, retention, restore evidence, RPO/RTO, and recovery readiness remain open. |
 | 15 | Reports | Reusable code | Assessment JSON and design exports work within their modules. The general report service and workspace need current client authorization and evidence integration. |
 | 16 | Administration | Working core | Local accounts, multi-client workspaces, role assignment, encrypted Azure credentials, and scoped audit review. Broader policy and integration administration remain open. |
+
+## Phase 6 compliance evidence
+
+Open Compliance and select a configured Azure subscription. The review uses
+the saved Security snapshot and groups relevant technical findings by control
+area. Review source, resource, and evidence before deciding whether a control
+is applicable or requesting corrective action.
+
+A matching finding is a reason to review the control area. Insufficient evidence
+leaves it unable to validate. The view identifies retained and incomplete
+snapshots and carries through coverage limits. Framework control catalogs,
+recorded manual reviews, corrective actions, and assessment history remain open.
 
 ## Phase 5 assessment and vulnerability records
 

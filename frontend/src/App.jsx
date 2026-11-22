@@ -5,6 +5,7 @@ import AzureInventoryWorkspace from "./workspaces/AzureInventoryWorkspace";
 import AzureMonitoringWorkspace from "./workspaces/AzureMonitoringWorkspace";
 import AzureNetworkWorkspace from "./workspaces/AzureNetworkWorkspace";
 import AzureSecurityWorkspace from "./workspaces/AzureSecurityWorkspace";
+import ComplianceWorkspace from "./workspaces/ComplianceWorkspace";
 import AssessmentWorkspace from "./workspaces/AssessmentWorkspace";
 import { AccountWorkspace, SignInForm } from "./workspaces/AccountWorkspace";
 import { getCurrentUser, logout, onUnauthorized, setApiSession } from "./services/api";
@@ -100,6 +101,7 @@ export default function App() {
             <button className={`nav-item ${workspace === "monitoring" ? "active" : ""}`} onClick={() => setWorkspace("monitoring")}>Monitoring</button>
             <button className={`nav-item ${workspace === "network" ? "active" : ""}`} onClick={() => setWorkspace("network")}>Network</button>
             <button className={`nav-item ${workspace === "security" ? "active" : ""}`} onClick={() => setWorkspace("security")}>Security</button>
+            <button className={`nav-item ${workspace === "compliance" ? "active" : ""}`} onClick={() => setWorkspace("compliance")}>Compliance</button>
             <button className={`nav-item ${workspace === "assessments" ? "active" : ""}`} onClick={() => setWorkspace("assessments")}>Assessments</button>
             <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
           </>}
@@ -133,6 +135,8 @@ export default function App() {
           <AzureNetworkWorkspace canRefresh={canEdit} />
         ) : workspace === "security" ? (
           <AzureSecurityWorkspace canRefresh={canEdit} />
+        ) : workspace === "compliance" ? (
+          <ComplianceWorkspace />
         ) : workspace === "assessments" ? (
           <AssessmentWorkspace canEdit={canEdit} />
         ) : (
