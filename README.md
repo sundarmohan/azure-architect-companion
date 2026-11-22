@@ -58,7 +58,7 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 | 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Design Details now compares top-level resources in a mapped subscription with its latest completed inventory, including missing, ambiguous, and stale results. Child resources need a separate matching model. |
 | 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Monitoring exposes resource health evidence for triage. Persisted alert acknowledgement and live Azure validation remain open. |
 | 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Triage remediation by tracking status in the current evidence snapshot. Linking findings to incident investigations remains open. |
-| 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Connect Azure and imported findings to vulnerability ownership, SLA, and risk acceptance records. |
+| 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Review imported findings across assessments and related Defender evidence for a configured subscription. Policy SLAs and risk acceptance records remain open. |
 | 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Map observed evidence to versioned controls and add manual review, corrective action, and assessment history. Design checks remain evidence for the controls they actually cover. |
 | 7 · DevSecOps, alerts, and incidents | `monitoring/alert_incident_workflow.py` and `incidents/` contain persisted alert and incident building blocks. | Secure the workflows with current client scope, connect evidence, and add assignment, RCA, and read-only GitHub metadata ingestion. |
 | 8 · Cost and recovery | `backend/app/domains/cost/` includes design estimates and Azure Cost Management parsing. | Scope actual costs to current client connections, then add budget and anomaly tracking plus backup and restore evidence. |
@@ -72,6 +72,34 @@ GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
 and the production frontend build. Azure integration tests use mocked provider
 responses.
 
+## Product module status
+
+This is a source and CI inventory for the development branch. An active
+workflow requires a reachable screen or API, client authorization, and usable
+underlying behavior. A working core can still have coverage and live validation
+gaps. Six modules have a working core, four are partial, four have reusable code
+awaiting integration, and two lack an active integration. These counts describe
+module breadth rather than percent complete.
+
+| # | Module | Status | Available behavior and remaining gap |
+| --- | --- | --- | --- |
+| 1 | Overview Dashboard | Reusable code | `PlatformDashboard.jsx` exists outside active navigation. It needs current client-scoped aggregation across health, security, compliance, incidents, and risks. |
+| 2 | Architecture Designer | Working core | Active Azure catalog and canvas, resource relationships, review and approval, revision comparison and restore, validation, cost estimates, and Terraform and Ansible downloads. Export support is bounded by resource types and options. Inventory comparison currently covers top-level resource identities. |
+| 3 | Azure Cloud Management | Working core | Encrypted client connection, configured subscriptions, and stored resource inventory. Live Azure validation remains open. |
+| 4 | Infrastructure Monitoring | Working core | Azure Resource Health, supported performance and capacity metrics, polling, bounded diagnostics, and health triage. Coverage depends on resource type and permissions. Persisted alerts remain open. |
+| 5 | Network Intelligence | Working core | Configured topology, DNS, routes, NSGs, firewalls, exposure, and aggregate traffic counters. Flow-level attribution and effective reachability remain open. |
+| 6 | Cybersecurity Engine | Partial | Configuration and IAM checks, Defender feeds where available, explainable risk, and remediation triage. Deeper identity, patch, and vulnerability coverage remains open. |
+| 7 | Ethical Hacking | Working core | Authorized scope records, sanitized evidence imports, finding lifecycle, human retesting, and JSON exports. Testing and scanning are human-led outside the application. |
+| 8 | Vulnerability Management | Partial | Sanitized scanner-result imports, deduplication, severity, ownership, due dates, and remediation tracking already work. The portfolio brings these records together and includes related Defender evidence. Policy SLAs and risk acceptance remain open. |
+| 9 | Threat Detection | Partial | Selected Azure Activity patterns and Defender alerts are displayed. Broader event correlation and incident investigations remain open. |
+| 10 | DevSecOps | Missing integration | Read-only GitHub and pipeline evidence ingestion, plus dependency, image, secret, and IaC finding workflows, remain open. |
+| 11 | Compliance Engine | Reusable code | Consolidated governance code has limited design checks. Live control mapping, evidence, review, and corrective actions across the four frameworks remain open. |
+| 12 | Alerts & Incidents | Reusable code | Models and `MonitoringAlertIncidentWorkflow` already exist, with older alert and incident handlers. Active routes gate those handlers. Current client-scoped evidence, triage, RCA, and corrective actions still need integration. |
+| 13 | Cost Management | Partial | Design cost estimation is active. The Azure Cost Management adapter is reusable for actual costs. Current tenant connection, budgets, anomalies, and optimization remain open. |
+| 14 | Backup & DR | Missing integration | Read-only backup jobs, retention, restore evidence, RPO/RTO, and recovery readiness remain open. |
+| 15 | Reports | Reusable code | Assessment JSON and design exports work within their modules. The general report service and workspace need current client authorization and evidence integration. |
+| 16 | Administration | Working core | Local accounts, multi-client workspaces, role assignment, encrypted Azure credentials, and scoped audit review. Broader policy and integration administration remain open. |
+
 ## Phase 5 assessment and vulnerability records
 
 In Assessment & Vulnerabilities, record authorization references, environment,
@@ -80,6 +108,13 @@ Import a JSON batch of sanitized findings from an approved tool. Repeat imports
 with the same source and external ID preserve the original finding and tracking.
 Move findings through confirmation, remediation, and human retest. A retest note
 is required to close a finding. Reports can be exported as JSON.
+
+The vulnerability portfolio lists imported findings across the selected
+client's assessments in severity order. Review the linked assessment to
+update ownership, deadlines, and retest status. Related Defender evidence
+comes from the saved Security snapshot for the selected configured
+subscription. Defender assessment evidence retains its source label because
+it can also describe broader security posture and recommendations.
 
 MonitorAI records and tracks assessment evidence. Assessment actions never
 connect to assessment targets, trigger tests, or run scanners. Keep credentials,

@@ -7,6 +7,7 @@ import {
   updateAssessmentFinding,
 } from "../services/api";
 import { displayLabel } from "./AzureSnapshotWorkspace";
+import VulnerabilityPortfolio from "./VulnerabilityPortfolio";
 
 const SEVERITIES = ["critical", "high", "medium", "low", "informational"];
 const STATUSES = ["open", "confirmed", "in_remediation", "ready_for_retest", "closed"];
@@ -295,6 +296,7 @@ export default function AssessmentWorkspace({ canEdit }) {
   const [assessments, setAssessments] = useState(null);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [showPortfolio, setShowPortfolio] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
 
@@ -332,6 +334,11 @@ export default function AssessmentWorkspace({ canEdit }) {
       <p>Record assessment scope and authorization, import reviewed findings, and track remediation and retesting.</p>
     </div></div>
     {error && <p className="error" role="alert">{error}</p>}
+    {!selected && <div className="actions"><button type="button" aria-expanded={showPortfolio}
+      onClick={() => setShowPortfolio((open) => !open)}>
+      {showPortfolio ? "Hide vulnerability portfolio" : "Open vulnerability portfolio"}
+    </button></div>}
+    {!selected && showPortfolio && <VulnerabilityPortfolio onOpenAssessment={openAssessment} opening={loadingDetail} />}
     {selected ? <AssessmentDetail key={selected.id} assessment={selected} canEdit={canEdit}
       onBack={() => setSelected(null)}
       onImport={() => reloadDetails(selected.id)}

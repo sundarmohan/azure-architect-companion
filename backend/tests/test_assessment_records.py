@@ -40,12 +40,18 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         assert imported.status_code == 200, imported.text
         assert imported.json() == {"inserted": 1, "duplicates": 1}
         assert client.post(assessment + "/findings/import", headers=own, json={"findings": [row]}).json()["duplicates"] == 1
+        other_assessment = client.post(PATH, headers=own, json={**details, "name": "Second review"}).json()
+        assert client.post(f"{PATH}/{other_assessment['id']}/findings/import", headers=own, json={
+            "findings": [{**row, "severity": "critical", "title": "Priority finding"}],
+        }).status_code == 200
+        assert client.get(PATH + "/portfolio", headers=foreign).json() == {"findings": [], "has_next": False}
         finding = f"{assessment}/findings/{client.get(assessment, headers=own).json()['findings'][0]['id']}"
         assert client.put(finding, headers=own, json={"status": "closed"}).status_code == 409
         for status in ("confirmed", "in_remediation", "ready_for_retest"):
             assert client.put(finding, headers=own, json={"status": status}).status_code == 200
         assert client.put(finding, headers=own, json={"status": "closed"}).status_code == 422
-        closed = client.put(finding, headers=own, json={"status": "closed", "retest_note": "Human retest passed"})
+        closed = client.put(finding, headers=own, json={"status": "closed", "retest_note": "Human retest passed",
+                                                       "owner": "Operations", "due_date": "2026-02-01"})
         assert closed.status_code == 200 and closed.json()["retest_note"] == "Human retest passed"
         history = client.get(assessment, headers=own).json()["findings"][0]["history"]
         assert [event["status"] for event in history] == ["confirmed", "in_remediation", "ready_for_retest", "closed"]
@@ -57,5 +63,15 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         client.cookies.clear()
         assert client.post("/api/auth/login", headers=WRITE, json={"username": username, "password": PASSWORD}).status_code == 200
         assert client.get(assessment, headers=own).status_code == 200
+        portfolio = client.get(PATH + "/portfolio", headers=own)
+        assert portfolio.status_code == 200, portfolio.text
+        data = portfolio.json()
+        assert not data["has_next"]
+        assert [row["severity"] for row in data["findings"]] == ["critical", "high"]
+        assert data["findings"][0]["assessment_id"] == other_assessment["id"]
+        assert data["findings"][1]["status"] == "closed"
+        assert data["findings"][1]["owner"] == "Operations"
+        assert data["findings"][1]["due_date"] == "2026-02-01"
+        assert client.get(PATH + "/portfolio", headers=foreign).status_code == 403
         assert client.post(PATH, headers=own, json=details).status_code == 403
         assert client.put(finding, headers=own, json={"status": "open"}).status_code == 403

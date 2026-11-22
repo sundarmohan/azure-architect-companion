@@ -164,6 +164,7 @@ export const updateAzureFindingTracking=(subscription,id,data)=>request(
  {method:"PUT",body:JSON.stringify(data)},
 );
 export const listAssessments=()=>fetchRequest("/assessments");
+export const getAssessmentPortfolio=page=>fetchRequest(`/assessments/portfolio?page=${page}`);
 export const createAssessment=data=>request("/assessments",{method:"POST",body:JSON.stringify(data)});
 export const getAssessment=id=>fetchRequest(`/assessments/${encodeURIComponent(id)}`);
 export const importAssessmentFindings=(id,data)=>request(`/assessments/${encodeURIComponent(id)}/findings/import`,{

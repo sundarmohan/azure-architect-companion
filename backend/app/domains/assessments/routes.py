@@ -4,9 +4,9 @@ from datetime import date
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,6 +93,25 @@ class AssessmentDetail(AssessmentRead):
     findings: list[FindingRead] = Field(default_factory=list)
 
 
+class PortfolioFinding(BaseModel):
+    id: UUID
+    assessment_id: UUID
+    assessment_name: str
+    title: str
+    severity: Severity
+    source: str
+    evidence: str
+    status: FindingStatus
+    owner: str | None
+    due_date: date | None
+    observed_at: AwareDatetime | None
+
+
+class PortfolioPage(BaseModel):
+    findings: list[PortfolioFinding]
+    has_next: bool
+
+
 async def scoped_assessment(db, client_id, assessment_id):
     item = await db.scalar(select(Assessment).where(Assessment.id == assessment_id, Assessment.client_id == client_id))
     if not item:
@@ -115,6 +134,30 @@ async def create_assessment(payload: AssessmentWrite, request: Request,
     audit(db, "create_security_assessment", request.state.account, client_id, str(item.id))
     await db.commit()
     return item
+
+
+@router.get("/portfolio", response_model=PortfolioPage)
+async def list_portfolio(page: int = Query(default=1, ge=1, le=1000),
+                         client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    page_size = 25
+    finding = AssessmentFinding
+    severity = case(
+        {"critical": 0, "high": 1, "medium": 2, "low": 3},
+        value=finding.severity, else_=4,
+    )
+    query = (
+        select(finding.id, finding.assessment_id, Assessment.name.label("assessment_name"),
+               finding.title, finding.severity, finding.source, finding.evidence,
+               finding.status, finding.owner, finding.due_date, finding.observed_at)
+        .join(Assessment, finding.assessment_id == Assessment.id)
+        .where(Assessment.client_id == client_id)
+        .order_by(severity, finding.created_at.desc(), finding.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size + 1)
+    )
+    rows = (await db.execute(query)).mappings().all()
+    return PortfolioPage(findings=[PortfolioFinding.model_validate(row) for row in rows[:page_size]],
+                         has_next=page < 1000 and len(rows) > page_size)
 
 
 @router.get("/{assessment_id}", response_model=AssessmentDetail)
