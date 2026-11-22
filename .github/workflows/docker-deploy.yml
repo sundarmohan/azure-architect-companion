@@ -24,7 +24,10 @@ jobs:
             if command -v aws >/dev/null; then echo "AWS CLI available on EC2"; fi
             echo "Container port bindings (images and ports only)"
             docker ps --format '{{.Image}} {{.Ports}}'
-            curl -fsS http://127.0.0.1:8003/health
+            caddy=$(docker ps --filter ancestor=caddy:2.10.2-alpine -q)
+            docker inspect --format '{{.Name}} {{.HostConfig.NetworkMode}}{{range .Mounts}} {{.Destination}}={{.Source}}{{end}}' "$caddy"
+            docker exec "$caddy" caddy version
+            docker exec "$caddy" caddy adapt --config /etc/caddy/Caddyfile 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(s.get("listen"),[(r.get("match"),[h.get("handler") for h in r.get("handle",[])]) for r in s.get("routes",[])]) for s in d["apps"]["http"]["servers"].values()])'
       - name: Check existing public transport
         env:
           HOST: ${{ secrets.EC2_HOST }}
