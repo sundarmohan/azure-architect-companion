@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  acknowledgeAzureHealthAlert,
   getAzureMonitoring,
   getAzureMonitoringSchedule,
   refreshAzureMonitoring,
@@ -51,7 +52,22 @@ function MetricSeries({ metric }) {
   </details>;
 }
 
-function HealthTriage({ snapshot, resources, onSelect }) {
+function HealthTriage({ snapshot, resources, subscription, canAcknowledge, onSelect, onAcknowledge }) {
+  const [pending, setPending] = useState(null);
+  const [error, setError] = useState("");
+
+  async function acknowledge(evidenceId) {
+    setPending(evidenceId);
+    setError("");
+    try {
+      const saved = await acknowledgeAzureHealthAlert(subscription, evidenceId);
+      onAcknowledge(saved);
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
+    } finally {
+      setPending(null);
+    }
+  }
   const confirmed = resources.filter((resource) => resource.health_status === "synced" &&
     ["available", "degraded", "unavailable"].includes(resource.health));
   const findings = confirmed.filter((resource) => resource.health !== "available");
@@ -65,15 +81,27 @@ function HealthTriage({ snapshot, resources, onSelect }) {
         ? <p>Incomplete evidence from the collection attempted at {snapshotTime(snapshot.last_attempt_at)}.</p>
         : snapshot.status === "synced" && <p>Snapshot collected {snapshotTime(snapshot.last_success_at)}.</p>}
     {resources.length > 0 && <p>Azure Resource Health confirmed the state of {confirmed.length} of {resources.length} sampled resources.</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+    {findings.length > 0 && !snapshot.last_success_at &&
+      <p>A complete saved collection is required to acknowledge these findings.</p>}
     {findings.length > 0 ? <div className="design-table">
       <table className="table" aria-label="Confirmed Azure resource health issues">
-        <thead><tr><th scope="col">Resource</th><th scope="col">Reported health</th><th scope="col">Location</th></tr></thead>
+        <thead><tr><th scope="col">Resource</th><th scope="col">Reported health</th><th scope="col">Location</th><th scope="col">Acknowledgement</th></tr></thead>
         <tbody>{findings.map((resource) => <tr key={resource.id}>
           <td><button type="button" className="dismiss" onClick={() => onSelect(resource.id)}>
             Review {resource.name || resource.id}
           </button></td>
           <td>{displayLabel(resource.health)}</td>
           <td>{resource.location || "Unknown"}</td>
+          <td>{resource.health_alert?.acknowledged_at
+            ? `Acknowledged ${snapshotTime(resource.health_alert.acknowledged_at)}`
+            : resource.health_alert && canAcknowledge
+              ? <button type="button" disabled={pending !== null}
+                  aria-label={`Acknowledge ${resource.name || resource.id}`}
+                  onClick={() => acknowledge(resource.health_alert.evidence_id)}>
+                  {pending === resource.health_alert.evidence_id ? "Saving…" : "Acknowledge"}
+                </button>
+              : resource.health_alert ? "Pending acknowledgement" : "Unavailable"}</td>
         </tr>)}</tbody>
       </table>
     </div> : <p>{confirmed.length ? "No degraded or unavailable resources in the confirmed evidence."
@@ -81,7 +109,7 @@ function HealthTriage({ snapshot, resources, onSelect }) {
   </section>;
 }
 
-function MonitoringResources({ snapshot }) {
+function MonitoringResources({ snapshot, subscription, canAcknowledge, onAcknowledge }) {
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const detailsHeading = useRef(null);
@@ -93,7 +121,8 @@ function MonitoringResources({ snapshot }) {
   const selected = matching.find(({ id }) => id === selectedId) || matching[0];
 
   return <>
-    <HealthTriage snapshot={snapshot} resources={resources} onSelect={(id) => {
+    <HealthTriage snapshot={snapshot} resources={resources} subscription={subscription}
+      canAcknowledge={canAcknowledge} onAcknowledge={onAcknowledge} onSelect={(id) => {
       setFilter("");
       setSelectedId(id);
       detailsHeading.current?.focus();
@@ -194,9 +223,14 @@ export default function AzureMonitoringWorkspace({ canRefresh, canManageSchedule
   return <AzureSnapshotWorkspace title="Infrastructure Monitoring"
     description="Review Azure availability and recent metrics for resources in the selected subscription."
     canRefresh={canRefresh} loadSnapshot={getAzureMonitoring} refreshSnapshot={refreshAzureMonitoring}>
-    {(snapshot, subscription) => <>
+    {(snapshot, subscription, setSnapshot) => <>
       {canManageSchedule && <MonitoringSchedule subscription={subscription} />}
-      {snapshot && <MonitoringResources snapshot={snapshot} />}
+      {snapshot && <MonitoringResources snapshot={snapshot} subscription={subscription} canAcknowledge={canRefresh}
+        onAcknowledge={(saved) => setSnapshot((current) => current && ({
+          ...current,
+          resources: current.resources.map((resource) => resource.health_alert?.evidence_id === saved.evidence_id
+            ? { ...resource, health_alert: saved } : resource),
+        }))} />}
       {canRefresh && <>
         <div className="actions">
           <button type="button" aria-expanded={showDiagnostics}

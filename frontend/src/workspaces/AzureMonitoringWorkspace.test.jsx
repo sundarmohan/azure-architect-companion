@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AzureMonitoringWorkspace from "./AzureMonitoringWorkspace";
 import {
+  acknowledgeAzureHealthAlert,
   getAzureConnectionStatus,
   getAzureInventory,
   getAzureMonitoring,
@@ -12,6 +13,7 @@ import {
 } from "../services/api";
 
 vi.mock("../services/api", () => ({
+  acknowledgeAzureHealthAlert: vi.fn(),
   getAzureConnectionStatus: vi.fn(),
   getAzureInventory: vi.fn(),
   getAzureMonitoring: vi.fn(),
@@ -72,6 +74,23 @@ describe("Azure monitoring workspace", () => {
     expect(filter).toHaveValue("");
     expect(screen.getByRole("heading", { name: /Resource health and metrics/ })).toHaveFocus();
     expect(screen.getByRole("heading", { name: "vm-unavailable" })).toBeInTheDocument();
+  });
+
+  it("shows acknowledgement to viewers and lets an editor acknowledge exact saved evidence", async () => {
+    const health_alert = { evidence_id: "a".repeat(64), acknowledged_at: null };
+    getAzureMonitoring.mockResolvedValue(snapshot("vm", {
+      resources: [{ id: "vm", name: "vm", health_status: "synced", health: "degraded", health_alert }],
+    }));
+    acknowledgeAzureHealthAlert.mockResolvedValue({ ...health_alert, acknowledged_at: "2026-11-01T01:00:00Z" });
+    const { rerender } = render(<AzureMonitoringWorkspace />);
+
+    expect(await screen.findByText("Pending acknowledgement")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Acknowledge vm" })).not.toBeInTheDocument();
+
+    rerender(<AzureMonitoringWorkspace canRefresh />);
+    fireEvent.click(screen.getByRole("button", { name: "Acknowledge vm" }));
+    expect(await screen.findByText(/^Acknowledged /)).toBeInTheDocument();
+    expect(acknowledgeAzureHealthAlert).toHaveBeenCalledWith(SUBSCRIPTIONS[0], health_alert.evidence_id);
   });
 
   it("distinguishes retained, incomplete, and unconfirmed evidence", async () => {

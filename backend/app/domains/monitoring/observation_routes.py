@@ -10,11 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.access.azure import connection_values, select_subscription
 from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, client_admin, get_db
+from .health_alerts import attach_health_alerts
+from .health_alerts import router as health_alert_router
 from .observation_models import AzureObservation, AzureObservationSchedule
 from .observations import ObservationKind, refresh_observations
 from .security_routes import attach_tracking
 
 router = APIRouter()
+router.include_router(health_alert_router)
 
 
 class ObservationRead(BaseModel):
@@ -44,9 +47,11 @@ class ScheduleRead(ScheduleWrite):
 async def observation_read(db, snapshot, selected):
     if snapshot is None:
         return ObservationRead(subscription_id=selected, status="not_synced" if selected else "not_configured")
+    payload = await attach_tracking(db, snapshot, snapshot.payload)
+    payload = await attach_health_alerts(db, snapshot, payload)
     return ObservationRead(
         subscription_id=selected, status=snapshot.status, last_attempt_at=snapshot.last_attempt_at,
-        last_success_at=snapshot.last_success_at, limitations=snapshot.limitations, **await attach_tracking(db, snapshot, snapshot.payload),
+        last_success_at=snapshot.last_success_at, limitations=snapshot.limitations, **payload,
     )
 
 

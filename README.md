@@ -56,11 +56,11 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 | --- | --- | --- |
 | 1 · Identity and clients | Local accounts, tenant membership, role guards, and audit event storage in `backend/app/domains/access/`. | Account now shows recent client or platform audit activity, scoped by administrator role. CI covers tenant isolation. |
 | 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Design Details now compares top-level resources in a mapped subscription with its latest completed inventory, including missing, ambiguous, and stale results. Child resources need a separate matching model. |
-| 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Monitoring exposes resource health evidence for triage. Persisted alert acknowledgement and live Azure validation remain open. |
+| 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Monitoring exposes resource health evidence for triage. Live Azure validation remains open. |
 | 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Triage remediation by tracking status in the current evidence snapshot. Linking findings to incident investigations remains open. |
 | 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Review imported findings across assessments and related Defender evidence for a configured subscription. Policy SLAs and risk acceptance records remain open. |
 | 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Compliance reviews saved Azure findings by technical control area. Versioned framework mappings, recorded reviews, corrective actions, and assessment history remain open. |
-| 7 · DevSecOps, alerts, and incidents | `monitoring/alert_incident_workflow.py` and `incidents/` contain persisted alert and incident building blocks. | Secure the workflows with current client scope, connect evidence, and add assignment, RCA, and read-only GitHub metadata ingestion. |
+| 7 · DevSecOps, alerts, and incidents | `monitoring/alert_incident_workflow.py` and `incidents/` contain persisted alert and incident building blocks. | Start linking confirmed health evidence to persisted acknowledgement. Incident assignment, RCA, and read-only GitHub metadata ingestion remain open. |
 | 8 · Cost and recovery | `backend/app/domains/cost/` includes design estimates and Azure Cost Management parsing. | Scope actual costs to current client connections, then add budget and anomaly tracking plus backup and restore evidence. |
 | 9 · Reports and validation | `backend/app/domains/reports/` and existing report and dashboard workspaces provide reusable presentation and aggregation logic. | Authorize reports by client and derive summaries from persisted evidence. Complete integrated workflow validation. |
 
@@ -77,7 +77,7 @@ responses.
 This is a source and CI inventory for the development branch. An active
 workflow requires a reachable screen or API, client authorization, and usable
 underlying behavior. A working core can still have coverage and live validation
-gaps. Six modules have a working core, five are partial, three have reusable code
+gaps. Six modules have a working core, six are partial, two have reusable code
 awaiting integration, and two lack an active integration. These counts describe
 module breadth rather than percent complete.
 
@@ -94,11 +94,23 @@ module breadth rather than percent complete.
 | 9 | Threat Detection | Partial | Selected Azure Activity patterns and Defender alerts are displayed. Broader event correlation and incident investigations remain open. |
 | 10 | DevSecOps | Missing integration | Read-only GitHub and pipeline evidence ingestion, plus dependency, image, secret, and IaC finding workflows, remain open. |
 | 11 | Compliance Engine | Partial | The active Compliance workspace reviews saved Azure technical evidence. Framework control catalogs, recorded review, corrective actions, and reporting remain open. |
-| 12 | Alerts & Incidents | Reusable code | Models and `MonitoringAlertIncidentWorkflow` already exist, with older alert and incident handlers. Active routes gate those handlers. Current client-scoped evidence, triage, RCA, and corrective actions still need integration. |
+| 12 | Alerts & Incidents | Partial | Monitoring supports acknowledgement of saved health evidence. Existing incident models and workflow code still need client-scoped evidence links, RCA, and corrective action integration. |
 | 13 | Cost Management | Partial | Design cost estimation is active. The Azure Cost Management adapter is reusable for actual costs. Current tenant connection, budgets, anomalies, and optimization remain open. |
 | 14 | Backup & DR | Missing integration | Read-only backup jobs, retention, restore evidence, RPO/RTO, and recovery readiness remain open. |
 | 15 | Reports | Reusable code | Assessment JSON and design exports work within their modules. The general report service and workspace need current client authorization and evidence integration. |
 | 16 | Administration | Working core | Local accounts, multi-client workspaces, role assignment, encrypted Azure credentials, and scoped audit review. Broader policy and integration administration remain open. |
+
+## Phase 7 monitoring alert acknowledgement
+
+In Monitoring, review confirmed resource health evidence for the selected
+Azure subscription. Editors and administrators can acknowledge a specific
+saved observation. MonitorAI keeps the acknowledgement and its evidence in
+the client workspace and records the action in audit history.
+
+An acknowledgement applies to the recorded observation. Later collections can
+show new evidence, and retained or incomplete snapshots still carry their
+collection status. Incident assignment, RCA, notifications, and DevSecOps
+integration remain open.
 
 ## Phase 6 compliance evidence
 

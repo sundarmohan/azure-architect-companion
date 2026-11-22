@@ -153,6 +153,10 @@ export const refreshAzureMonitoring=id=>request(`/azure/monitoring/refresh${subs
 export const queryAzureDiagnostics=(id,data)=>fetchRequest(`/azure/diagnostics/query${subscriptionQuery(id)}`,{
  method:"POST",body:JSON.stringify(data),
 });
+export const acknowledgeAzureHealthAlert=(subscription,evidenceId)=>request(
+ `/azure/monitoring/health-alerts/${encodeURIComponent(evidenceId)}/acknowledgement${subscriptionQuery(subscription)}`,
+ {method:"PUT"},
+);
 export const getAzureMonitoringSchedule=id=>fetchRequest(`/azure/monitoring/schedule${subscriptionQuery(id)}`);
 export const updateAzureMonitoringSchedule=(id,data)=>request(`/azure/monitoring/schedule${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
 export const getAzureNetwork=id=>fetchRequest(`/azure/network${subscriptionQuery(id)}`);

@@ -30,7 +30,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         if not context.inventory_exists:
             return {kind: ("inventory_required", {}, []) for kind in kinds}
         assert str(context.subscription_id) == primary and context.resources == [resource]
-        payload = {"monitoring": {"resources": [{**resource, "health": "available", "metrics": []}]},
+        payload = {"monitoring": {"resources": [{**resource, "health": "degraded", "health_status": "synced", "metrics": []}]},
                    "network": {"resources": [], "links": []},
                    "security": {"findings": [{"id": "a" * 64, "code": "storage", "title": "Example",
                                                "severity": "high", "evidence": [], "source": "azure"}],
@@ -67,6 +67,27 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
             assert client.get(path, headers=second_headers).json()["status"] == "not_synced"
             assert client.get(path, headers=first_headers, params={"subscription_id": secondary}).json()["status"] == "not_synced"
 
+        initial = client.get(monitor, headers=first_headers).json()["resources"][0]["health_alert"]
+        assert initial["acknowledged_at"] is None
+        alert = f"{monitor}/health-alerts/{initial['evidence_id']}/acknowledgement"
+        assert client.put(alert, headers=second_headers).status_code == 409
+        assert client.put(alert, headers=first_headers, params={"subscription_id": secondary}).status_code == 409
+        saved_ack = client.put(alert, headers=first_headers)
+        assert saved_ack.status_code == 200, saved_ack.text
+        assert saved_ack.json()["acknowledged_at"]
+        assert client.put(alert, headers=first_headers).json() == saved_ack.json()
+        assert client.get(monitor, headers=first_headers).json()["resources"][0]["health_alert"] == saved_ack.json()
+
+        changed = client.post(monitor + "/refresh", headers=first_headers).json()
+        assert changed["resources"][0]["health_alert"]["acknowledged_at"] is None
+        assert changed["resources"][0]["health_alert"]["evidence_id"] != initial["evidence_id"]
+        assert client.put(alert, headers=first_headers).json() == saved_ack.json()
+        superseded = f"{monitor}/health-alerts/{changed['resources'][0]['health_alert']['evidence_id']}/acknowledgement"
+        assert client.post(monitor + "/refresh", headers=first_headers).status_code == 200
+        assert client.put(superseded, headers=first_headers).status_code == 409
+        events = client.get("/api/audit", headers=first_headers).json()
+        assert sum(event["action"] == "acknowledge_azure_health_alert" for event in events) == 1
+
         details = {"status": "in_progress", "owner": "Cloud operations", "due_date": "2026-12-31"}
         assert client.put(tracking, headers=second_headers, json=details).status_code == 404
         saved = client.put(tracking, headers=first_headers, json=details)
@@ -78,7 +99,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         status = "permission_failure"
         read = client.post(monitor + "/refresh", headers=first_headers).json()
         assert read["status"] == "permission_failure"
-        assert read["last_success_at"] and read["resources"][0]["health"] == "available"
+        assert read["last_success_at"] and read["resources"][0]["health"] == "degraded"
         assert client.get(schedule, headers=first_headers).json()["include_security"] is False
         assert client.put(schedule, headers=first_headers, json={"enabled": True, "interval_minutes": 4}).status_code == 422
         configured = client.put(schedule, headers=first_headers, json={
@@ -97,6 +118,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.get(network, headers=second_headers).status_code == 403
         assert client.post(monitor + "/refresh", headers=first_headers).status_code == 403
         assert client.put(tracking, headers=first_headers, json=details).status_code == 403
+        assert client.put(alert, headers=first_headers).status_code == 403
         assert client.put(schedule, headers=first_headers, json={"enabled": False, "interval_minutes": 5}).status_code == 403
         client.cookies.clear()
         client.cookies.set("monitorai_session", admin)

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,3 +42,16 @@ class AzureSecurityTracking(Base):
     status: Mapped[str] = mapped_column(String(16))
     owner: Mapped[str | None] = mapped_column(String(120))
     due_date: Mapped[date | None]
+
+
+class AzureHealthAcknowledgement(Base):
+    __tablename__ = "azure_health_acknowledgements"
+
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(Text)
+    health: Mapped[str] = mapped_column(String(16))
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    actor_id: Mapped[UUID]
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
