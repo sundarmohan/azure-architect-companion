@@ -28,8 +28,23 @@ jobs:
             bash deploy/configure-ingress.sh
       - name: Verify certificate and health externally
         run: |
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 2); do
             if curl -fsS --max-time 5 https://98.130.117.140/health; then exit 0; fi
             sleep 4
           done
           exit 1
+      - name: Check certificate issuance status
+        if: always()
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            docker logs --since 12m rca-ingress-caddy-1 2>&1 | python3 -c 'import json,sys
+            for line in sys.stdin:
+                try: entry=json.loads(line)
+                except ValueError: continue
+                if "98.130.117.140" in line and "tls" in entry.get("logger",""):
+                    print(entry.get("logger"), entry.get("msg"), entry.get("error",""))'
+            echo | timeout 8 openssl s_client -connect 127.0.0.1:443 -servername 98.130.117.140 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName || true
