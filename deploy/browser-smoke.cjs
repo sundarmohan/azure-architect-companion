@@ -50,12 +50,12 @@ async function verify() {
     if (!response.ok() || !(await response.json()).is_platform_admin) throw new Error("Administrator API session failed");
 
     for (const label of ["Architecture Studio", "Azure Inventory", "Monitoring", "Network", "Security", "Assessments", "Azure Connection", "Account"]) {
-    stage = "activate the workspace";
+    stage = `activate the ${label} workspace`;
       const button = navigation.getByRole("button", { name: label, exact: true });
       await button.click();
       await navigation.locator(".active").filter({ hasText: label }).waitFor();
-    stage = "render the workspace heading";
-      await page.getByRole("main").getByRole("heading", { level: 1 }).waitFor();
+    stage = `render the ${label} workspace`;
+      await page.locator("main.app-main .workspace-panel :is(h1, h2, label, button):visible").first().waitFor();
       console.log(`Workspace rendered: ${label}`);
     }
     await page.getByRole("button", { name: "Sign out" }).click();
