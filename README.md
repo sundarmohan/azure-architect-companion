@@ -87,21 +87,37 @@ records only. The risk score sums finding severity weights, capped at 100.
 A score applies to available evidence and does not certify the environment.
 Missing Azure permissions and unsupported sources are identified separately.
 
-## Private EC2 deployment
+## EC2 deployment
 
-MonitorAI V2.2 runs on EC2 loopback port 8003 with a dedicated PostgreSQL
-database and volume. Open an SSH tunnel using your authorized EC2 account:
+MonitorAI serves its bundled frontend and same-origin API through Caddy.
+The app listens on EC2 loopback port 8003. PostgreSQL uses a dedicated Docker
+network and persistent volume without a published port.
 
-```sh
-ssh -N -L 8003:127.0.0.1:8003 EC2_USER@EC2_HOST
-```
+1. In GitHub's `Dev` environment, keep `EC2_HOST`, `EC2_USER`, and
+   `EC2_SSH_PRIVATE_KEY` configured. Set `MONITORAI_PUBLIC_URL` to the
+   HTTPS origin assigned to MonitorAI. An optional `EC2_INSTANCE_ID` pins
+   the SSH target to an approved instance.
+2. On the existing EC2 host, export `MONITORAI_PUBLIC_HOST` for that origin
+   and run `bash deploy/configure-ingress.sh` from the deployment files. This
+   provisions the separate MonitorAI virtual host on the existing host-network
+   Caddy proxy. Point the domain at EC2 before using domain HTTPS. For direct
+   IPv4 HTTPS, use a stable public IPv4 and allow certificate validation on the
+   existing port 80/443 ingress.
+3. Push to `main`, or start the workflow manually from `main` with `deploy`
+   enabled. Pull requests run CI only. Check that image publication, deployment,
+   public Chromium verification, and release finalization all pass.
+4. Open the configured public URL and use your existing MonitorAI credentials.
+   The workflow checks the rendered sign-in screen and protected API without
+   using a stored administrator password.
 
-Open [MonitorAI](http://localhost:8003) in Chrome or Edge. For the first
-sign-in, use `monitorai-admin` and retrieve the bootstrap password from
-`~/monitorai-v22/.env` in your authorized EC2 session. Change it in Account
-after signing in.
-
-[Deployment run](https://github.com/sundarmohan/azure-architect-companion/actions/runs/45035418748)
+The deployment replaces only the MonitorAI app container. It verifies the
+mounted PostgreSQL volume and runs Alembic upgrade after confirming the
+candidate and current database are at the same revision. Schema-changing
+releases need a separate backward-compatible migration plan before rollout.
+A failed application or public browser check restores the previous app image
+without downgrading or restoring the live database. If the RCA ingress is
+redeployed from a different release directory, reapply the MonitorAI virtual
+host to that active Caddy configuration.
 
 ## Phase 3 Azure monitoring and network intelligence
 

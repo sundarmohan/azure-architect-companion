@@ -23,7 +23,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: ${DOCKER_IMAGE:-ghcr.io/sundarmohan/azure-architect-companion}:${IMAGE_TAG:-latest}
+    image: ${MONITORAI_IMAGE_REF:-ghcr.io/sundarmohan/azure-architect-companion:latest}
     depends_on:
       postgres:
         condition: service_healthy

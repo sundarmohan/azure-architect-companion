@@ -17,12 +17,6 @@ on:
         type: boolean
         required: true
         default: false
-      verify_browser:
-        description: Run browser login and workspace verification after deployment
-        type: boolean
-        required: true
-        default: true
-
 permissions:
   contents: read
 
@@ -30,7 +24,7 @@ env:
   IMAGE_NAME: ghcr.io/sundarmohan/azure-architect-companion
 
 concurrency:
-  group: monitorai-v22-${{ github.event_name == 'workflow_dispatch' && inputs.deploy == true && 'deployment' || github.ref }}
+  group: monitorai-v22-${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy == true)) && 'deployment' || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -106,8 +100,7 @@ jobs:
       - frontend-test
     if: >-
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deploy == true
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy == true))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -143,259 +136,97 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
-    name: Deploy to Approved EC2
+    name: Deploy and verify public UI
     needs: build-and-push
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deploy == true
     runs-on: ubuntu-latest
-    # Secrets and variables are stored under Settings > Environments > Dev.
     environment: Dev
     permissions:
       contents: read
       packages: read
     env:
-      EC2_HOST: ${{ secrets.EC2_HOST }}
-      EC2_USER: ${{ secrets.EC2_USER }}
-      EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
+      MONITORAI_PUBLIC_URL: ${{ vars.MONITORAI_PUBLIC_URL }}
+      RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      DOCKER_IMAGE: ghcr.io/sundarmohan/azure-architect-companion
+      IMAGE_TAG: ${{ github.sha }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Validate deployment configuration
-        shell: bash
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare browser verification
         run: |
-          set -euo pipefail
-          for name in EC2_HOST EC2_USER EC2_SSH_PRIVATE_KEY EC2_INSTANCE_ID; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing or unavailable Dev environment value: ${name}"
-              exit 1
-            fi
-            echo "${name}: configured"
-          done
-          echo "All deployment settings are available."
+          set -eu
+          node -e 'const u = new URL(process.env.MONITORAI_PUBLIC_URL); if (u.protocol !== "https:" || u.href !== u.origin + "/") throw Error("Dev MONITORAI_PUBLIC_URL must be an HTTPS origin");'
+          work=$(mktemp -d)
+          cp deploy/browser-smoke.cjs "$work/"
+          cd "$work"
+          npm install --no-audit --no-fund --no-save playwright-core@1.56.1
+          echo "BROWSER_WORK=$work" >> "$GITHUB_ENV"
 
-      - name: Copy deployment files to EC2
+      - name: Copy release files to EC2
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           source: "docker-compose.yml,deploy/deploy.sh"
-          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22"
+          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22/releases/${{ env.RELEASE_ID }}"
 
-      - name: Identify EC2 and deploy exact image
+      - name: Deploy app and check database and API
+        id: app
         uses: appleboy/ssh-action@v1
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCKER_IMAGE: ${{ env.IMAGE_NAME }}
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
           EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          command_timeout: 20m
-          envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG,EC2_INSTANCE_ID
+          envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG,RELEASE_ID,EC2_INSTANCE_ID
+          command_timeout: 12m
           script: |
-            set -Eeuo pipefail
+            set -eu
             cd ~/monitorai-v22
-
-            echo "=== IDENTIFYING EC2 TARGET ==="
-            TOKEN=$(curl -fsS --max-time 5 \
-              -X PUT \
-              -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
-              http://169.254.169.254/latest/api/token)
-            INSTANCE_ID=$(curl -fsS --max-time 5 \
-              -H "X-aws-ec2-metadata-token: $TOKEN" \
-              http://169.254.169.254/latest/meta-data/instance-id)
-            REGION=$(curl -fsS --max-time 5 \
-              -H "X-aws-ec2-metadata-token: $TOKEN" \
-              http://169.254.169.254/latest/meta-data/placement/region)
-            PRIVATE_IP=$(curl -fsS --max-time 5 \
-              -H "X-aws-ec2-metadata-token: $TOKEN" \
-              http://169.254.169.254/latest/meta-data/local-ipv4)
-
-            echo "EC2 Instance ID: $INSTANCE_ID"
-            echo "AWS Region: $REGION"
-            echo "Private IP: $PRIVATE_IP"
-
-            if [ "$INSTANCE_ID" != "$EC2_INSTANCE_ID" ]; then
-              echo "::error::EC2 instance ID does not match the approved target."
-              exit 1
+            if [ -n "${EC2_INSTANCE_ID:-}" ]; then
+              token=$(curl -fsS --max-time 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+              actual=$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-id)
+              test "$actual" = "$EC2_INSTANCE_ID"
             fi
+            auth=$(mktemp -d)
+            trap 'rm -rf "$auth"' EXIT
+            export DOCKER_CONFIG="$auth"
+            printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            unset GHCR_TOKEN
+            bash "releases/$RELEASE_ID/deploy/deploy.sh"
 
-            echo "=== AUTHENTICATING TO GHCR ==="
-            echo "$GHCR_TOKEN" | docker login ghcr.io \
-              -u "$GHCR_USER" --password-stdin
-            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
-
-            export IMAGE_TAG DOCKER_IMAGE
-            export COMPOSE_PROJECT_NAME=monitorai-v22
-            echo "Image to deploy: $DOCKER_IMAGE:$IMAGE_TAG"
-
-            echo "=== DEPLOYING MONITORAI V2.2 ==="
-            # deploy.sh and docker-compose.yml must use DOCKER_IMAGE and IMAGE_TAG.
-            bash deploy/deploy.sh
-
-            echo "=== VERIFYING CONTAINERS ==="
-            APP=$(docker compose ps -q app)
-            DB=$(docker compose ps -q postgres)
-            test -n "$APP"
-            test -n "$DB"
-
-            EXPECTED_IMAGE="$DOCKER_IMAGE:$IMAGE_TAG"
-            ACTUAL_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$APP")
-            if [ "$ACTUAL_IMAGE" != "$EXPECTED_IMAGE" ]; then
-              echo "Expected image: $EXPECTED_IMAGE"
-              echo "Actual image: $ACTUAL_IMAGE"
-              exit 1
-            fi
-
-            APP_STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$APP")
-            DB_STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$DB")
-            test "$APP_STATUS" = "healthy"
-            test "$DB_STATUS" = "healthy"
-
-            echo "Application: $APP_STATUS"
-            echo "Database: $DB_STATUS"
-            echo "Running image: $ACTUAL_IMAGE"
-
-            echo "=== VERIFYING DATABASE MIGRATIONS ==="
-            docker compose exec -T app alembic heads
-            docker compose exec -T app alembic current
-
-            echo "=== VERIFYING APPLICATION HEALTH ==="
-            curl -fsS http://127.0.0.1:8003/health
-            echo
-
-            API_STATUS=$(curl -sS -o /dev/null \
-              -w '%{http_code}' \
-              http://127.0.0.1:8003/api/auth/me)
-            if [ "$API_STATUS" != "401" ] && [ "$API_STATUS" != "403" ]; then
-              echo "Protected API returned unexpected status: $API_STATUS"
-              exit 1
-            fi
-
-            echo "Protected API authentication check: $API_STATUS"
-            echo "=== DEPLOYMENT VERIFIED ==="
-            echo "EC2 Instance: $INSTANCE_ID"
-            echo "Region: $REGION"
-            echo "Private IP: $PRIVATE_IP"
-            echo "Image: $ACTUAL_IMAGE"
-
-      - name: Deployment summary
-        if: success()
-        shell: bash
+      - name: Verify public Chromium access
         run: |
-          {
-            echo "## MonitorAI V2.2 Deployment"
-            echo ""
-            echo "- Result: Successful"
-            echo "- EC2 instance: \`${EC2_INSTANCE_ID}\`"
-            echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- Image: \`${IMAGE_NAME}:${GITHUB_SHA}\`"
-            echo "- Directory: \`~/monitorai-v22\`"
-            echo "- Port: \`127.0.0.1:8003\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -eu
+          cd "$BROWSER_WORK"
+          node --unhandled-rejections=strict browser-smoke.cjs
 
-  browser-verify:
-    name: Browser Login and Workspace Verification
-    needs: deploy
-    if: >-
-      needs.deploy.result == 'success' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.verify_browser == true
-    runs-on: ubuntu-latest
-    # Browser verification also needs the Dev environment SSH secrets.
-    environment: Dev
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Roll back the application on failure
+        if: failure() && steps.app.outcome == 'success'
+        uses: appleboy/ssh-action@v1
         with:
-          node-version: '24'
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: DOCKER_IMAGE,IMAGE_TAG,RELEASE_ID
+          script: |
+            set -eu
+            cd ~/monitorai-v22
+            bash "releases/$RELEASE_ID/deploy/deploy.sh" rollback
 
-      - name: Verify application through private SSH tunnel
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          for name in EC2_HOST EC2_USER EC2_SSH_PRIVATE_KEY; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing or unavailable Dev environment value: ${name}"
-              exit 1
-            fi
-          done
-
-          WORK=$(mktemp -d)
-          TUNNEL_PID=""
-
-          cleanup() {
-            if [ -n "$TUNNEL_PID" ]; then
-              kill "$TUNNEL_PID" 2>/dev/null || true
-            fi
-            rm -rf "$WORK"
-          }
-          trap cleanup EXIT
-          umask 077
-
-          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$WORK/key"
-          unset EC2_SSH_PRIVATE_KEY
-
-          SSH_OPTS=(
-            -i "$WORK/key"
-            -o BatchMode=yes
-            -o StrictHostKeyChecking=accept-new
-            -o "UserKnownHostsFile=$WORK/known_hosts"
-            -o ConnectTimeout=15
-          )
-
-          ssh "${SSH_OPTS[@]}" \
-            "$EC2_USER@$EC2_HOST" \
-            'grep -E "^MONITORAI_BOOTSTRAP_(USERNAME|PASSWORD)=" ~/monitorai-v22/.env' \
-            > "$WORK/bootstrap"
-
-          ssh "${SSH_OPTS[@]}" -NT \
-            -L 8003:127.0.0.1:8003 \
-            "$EC2_USER@$EC2_HOST" &
-          TUNNEL_PID=$!
-
-          READY=false
-          for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8003/health >/dev/null; then
-              READY=true
-              break
-            fi
-            sleep 2
-          done
-
-          if [ "$READY" != "true" ]; then
-            echo "Application did not become reachable through SSH tunnel."
-            exit 1
-          fi
-
-          curl -fsS http://127.0.0.1:8003/health
-          echo
-
-          npm install --no-audit --no-fund --no-save playwright-core@1.56.1
-          cp deploy/browser-smoke.cjs "$WORK/"
-          cd "$WORK"
-          node browser-smoke.cjs
-
-      - name: Browser verification summary
-        if: always()
-        run: |
-          {
-            echo "## Browser verification"
-            echo ""
-            echo "- Result: ${{ job.status }}"
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Finalize verified release
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: DOCKER_IMAGE,IMAGE_TAG,RELEASE_ID
+          script: |
+            set -eu
+            cd ~/monitorai-v22
+            bash "releases/$RELEASE_ID/deploy/deploy.sh" finalize
