@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "Deployment command failed at line $LINENO" >&2' ERR
 umask 077
 cd "${DEPLOYMENT_DIR:-.}"
 export COMPOSE_PROJECT_NAME=monitorai-v22
@@ -46,7 +47,7 @@ db=$("${existing[@]}" ps -q postgres)
 test -n "$app" && test -n "$db"
 test "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy
 test "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$db")" = monitorai-v22_monitorai_pg_data
-test -z "$("${existing[@]}" port postgres 5432 2>/dev/null || true)"
+test "$(docker inspect --format '{{len .HostConfig.PortBindings}}' "$db")" = 0
 test "$("${existing[@]}" port app 8000)" = 127.0.0.1:8003
 
 previous=$(docker inspect --format '{{.Config.Image}}' "$app")
