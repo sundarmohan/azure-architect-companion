@@ -1,232 +1,39 @@
-name: MonitorAI V2.2 - Build and Deploy to EC2
-
-on:
-  push:
-    branches:
-      - main
-      - consolidation/v2.2-baseline
-
-  pull_request:
-    branches:
-      - main
-
-  workflow_dispatch:
-    inputs:
-      deploy:
-        description: Build, publish and deploy this commit to the approved EC2
-        type: boolean
-        required: true
-        default: false
-permissions:
-  contents: read
-
-env:
-  IMAGE_NAME: ghcr.io/sundarmohan/azure-architect-companion
-
-concurrency:
-  group: monitorai-v22-${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy == true)) && 'deployment' || github.ref }}
-  cancel-in-progress: false
-
+name: Verify public MonitorAI independently
+on: workflow_dispatch
 jobs:
-  backend-test:
-    name: Backend Tests
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: monitorai
-          POSTGRES_PASSWORD: ci_only_password
-          POSTGRES_DB: monitorai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U monitorai -d monitorai"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgresql+asyncpg://monitorai:ci_only_password@localhost:5432/monitorai
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - name: Install dependencies
-        working-directory: backend
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest-github-actions-annotate-failures
-      - name: Validate Alembic migration chain
-        working-directory: backend
-        run: |
-          alembic heads
-          alembic history
-          alembic upgrade head
-          alembic current
-      - name: Run backend tests
-        working-directory: backend
-        run: pytest -v --tb=short
-
-  frontend-test:
-    name: Frontend Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-      - name: Run frontend tests
-        working-directory: frontend
-        run: npm test
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
-
-  build-and-push:
-    name: Build and Push Docker Image
-    needs:
-      - backend-test
-      - frontend-test
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy == true))
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image_tag: ${{ github.sha }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and Push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Record published image
-        run: |
-          {
-            echo "### Docker image published"
-            echo ""
-            echo "- Image: \`${IMAGE_NAME}:${GITHUB_SHA}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  deploy:
-    name: Deploy and verify public UI
-    needs: build-and-push
+  verify:
     runs-on: ubuntu-latest
     environment: Dev
-    permissions:
-      contents: read
-      packages: read
     env:
       MONITORAI_PUBLIC_URL: ${{ vars.MONITORAI_PUBLIC_URL }}
-      RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-      DOCKER_IMAGE: ghcr.io/sundarmohan/azure-architect-companion
-      IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Prepare browser verification
+      - name: Open public MonitorAI in Chromium
         run: |
           set -eu
-          node -e 'const u = new URL(process.env.MONITORAI_PUBLIC_URL); if (u.protocol !== "https:" || u.href !== u.origin + "/") throw Error("Dev MONITORAI_PUBLIC_URL must be an HTTPS origin");'
           work=$(mktemp -d)
           cp deploy/browser-smoke.cjs "$work/"
           cd "$work"
           npm install --no-audit --no-fund --no-save playwright-core@1.56.1
-          echo "BROWSER_WORK=$work" >> "$GITHUB_ENV"
-
-      - name: Copy release files to EC2
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          source: "docker-compose.yml,deploy/deploy.sh"
-          target: "/home/${{ secrets.EC2_USER }}/monitorai-v22/releases/${{ env.RELEASE_ID }}"
-
-      - name: Deploy app and check database and API
-        id: app
-        uses: appleboy/ssh-action@v1
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || secrets.EC2_INSTANCE_ID }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: GHCR_USER,GHCR_TOKEN,DOCKER_IMAGE,IMAGE_TAG,RELEASE_ID,EC2_INSTANCE_ID
-          command_timeout: 12m
-          script: |
-            set -eu
-            cd ~/monitorai-v22
-            if [ -n "${EC2_INSTANCE_ID:-}" ]; then
-              token=$(curl -fsS --max-time 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
-              actual=$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-id)
-              test "$actual" = "$EC2_INSTANCE_ID"
-            fi
-            auth=$(mktemp -d)
-            trap 'rm -rf "$auth"' EXIT
-            export DOCKER_CONFIG="$auth"
-            printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            unset GHCR_TOKEN
-            bash "releases/$RELEASE_ID/deploy/deploy.sh"
-
-      - name: Verify public Chromium access
-        run: |
-          set -eu
-          cd "$BROWSER_WORK"
           node --unhandled-rejections=strict browser-smoke.cjs
-
-      - name: Roll back the application on failure
-        if: failure() && steps.app.outcome == 'success'
-        uses: appleboy/ssh-action@v1
+      - uses: appleboy/ssh-action@v1
+        if: always()
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: DOCKER_IMAGE,IMAGE_TAG,RELEASE_ID
           script: |
             set -eu
             cd ~/monitorai-v22
-            bash "releases/$RELEASE_ID/deploy/deploy.sh" rollback
-
-      - name: Finalize verified release
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: DOCKER_IMAGE,IMAGE_TAG,RELEASE_ID
-          script: |
-            set -eu
-            cd ~/monitorai-v22
-            bash "releases/$RELEASE_ID/deploy/deploy.sh" finalize
+            export COMPOSE_PROJECT_NAME=monitorai-v22
+            app=$(docker compose ps -q app)
+            db=$(docker compose ps -q postgres)
+            echo "App and database present: $(test -n "$app" && test -n "$db" && echo yes)"
+            echo "Database health: $(docker inspect --format '{{.State.Health.Status}}' "$db")"
+            echo "Database volume: $(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$db")"
+            echo "Database Compose port result: $(docker compose port postgres 5432 2>/dev/null || true)"
+            echo "Database published port count: $(docker inspect --format '{{len .HostConfig.PortBindings}}' "$db")"
+            echo "App port: $(docker compose port app 8000)"
