@@ -1,6 +1,8 @@
 const { readFileSync } = require("node:fs");
 const { chromium } = require("playwright-core");
 
+let stage = "read bootstrap settings";
+
 async function verify() {
   const settings = Object.fromEntries(readFileSync("bootstrap", "utf8").trim()
     .split("\n").map((line) => line.split(/=(.*)/s, 2)));
@@ -52,6 +54,6 @@ async function verify() {
 
 verify().catch((error) => {
   // Keep Playwright call logs out of CI because they may include filled inputs.
-  console.error(error.name === "TimeoutError" ? "Browser check timed out" : "Browser check failed");
+  console.error(`Browser check failed during ${stage} (${error.name})`);
   process.exitCode = 1;
 });
