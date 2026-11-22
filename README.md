@@ -87,24 +87,21 @@ records only. The risk score sums finding severity weights, capped at 100.
 A score applies to available evidence and does not certify the environment.
 Missing Azure permissions and unsupported sources are identified separately.
 
-## Interim EC2 preview
+## Private EC2 deployment
 
-The isolated preview runs Phase 5 application source `791bf29` using image
-tag `preview-5ee4f5a1ca29cb5c69a14a19cb52de55c092959c`. The upgrade reused
-the preview PostgreSQL volume after creating and checking a backup archive.
-The preview binds to EC2 loopback port 8002 alongside the legacy service.
-[Current deployment and smoke checks](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44943178221)
-
-Open an SSH tunnel using the existing EC2 SSH credentials:
+MonitorAI V2.2 runs on EC2 loopback port 8003 with a dedicated PostgreSQL
+database and volume. Open an SSH tunnel using your authorized EC2 account:
 
 ```sh
-ssh -N -L 8002:127.0.0.1:8002 EC2_USER@EC2_HOST
+ssh -N -L 8003:127.0.0.1:8003 EC2_USER@EC2_HOST
 ```
 
-Then open `http://localhost:8002` in Chrome or Edge. Sign in as
-`monitorai-admin` using the bootstrap password in the protected
-`~/monitorai-v22-preview/.env` file on EC2. Use your authorized EC2 session
-to access the file and change the bootstrap password after first sign-in.
+Open [MonitorAI](http://localhost:8003) in Chrome or Edge. For the first
+sign-in, use `monitorai-admin` and retrieve the bootstrap password from
+`~/monitorai-v22/.env` in your authorized EC2 session. Change it in Account
+after signing in.
+
+[Deployment run](https://github.com/sundarmohan/azure-architect-companion/actions/runs/45035418748)
 
 ## Phase 3 Azure monitoring and network intelligence
 
