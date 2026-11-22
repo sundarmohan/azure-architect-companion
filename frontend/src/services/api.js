@@ -101,6 +101,8 @@ const authWrite=(path,data)=>fetchRequest(`/auth/${path}`,{
 export const login=(username,password)=>authWrite("login",{username,password});
 export const logout=()=>authWrite("logout");
 export const getCurrentUser=()=>fetchRequest("/auth/me");
+export const getClientAudit=signal=>fetchRequest("/audit",{signal});
+export const getPlatformAudit=signal=>fetchRequest("/auth/audit",{signal});
 export const changePassword=data=>authWrite("password",data);
 export const createUser=data=>authWrite("users",data);
 export const resetUserPassword=(username,data)=>authWrite(`users/${encodeURIComponent(username)}/password`,data);

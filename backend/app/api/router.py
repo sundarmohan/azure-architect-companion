@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.assessments.routes import router as assessment_router
 from app.domains.access.azure import router as settings_router
 from app.domains.access.inventory import router as inventory_router
-from app.domains.access.routes import audit, client_access, get_db, require_request_header
+from app.domains.access.routes import audit, audit_router, client_access, get_db, require_request_header
 from app.domains.access.routes import router as auth_router
 from app.domains.architecture.artifacts import router as artifacts_router
 from app.domains.architecture.lifecycle import router as lifecycle_router
@@ -63,6 +63,7 @@ async def authorize_graph(request: Request, client_id: UUID = Depends(client_acc
 
 api_router = APIRouter(dependencies=[Depends(require_request_header)])
 api_router.include_router(auth_router, prefix="/auth", tags=["authentication"])
+api_router.include_router(audit_router, tags=["audit"])
 api_router.include_router(architecture_router, prefix="/architectures", tags=["architectures"],
                           dependencies=[Depends(authorize_graph)])
 api_router.include_router(azure_router, prefix="/azure", tags=["azure"], dependencies=[Depends(client_access)])

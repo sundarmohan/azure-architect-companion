@@ -50,7 +50,23 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 - [x] Phase 5: authorized assessment records, finding imports, and retest tracking.
   [GitHub Actions verified the Phase 5 code at `791bf29`](https://github.com/sundarmohan/azure-architect-companion/actions/runs/44943078778).
   The private EC2 preview was upgraded after a preview database backup.
-- [ ] Later phases: resume from the delivery phases in `PROJECT_REQUIREMENTS.md`.
+### Remaining development by phase
+
+| Phase | Working foundation to reuse | Gap to close |
+| --- | --- | --- |
+| 1 · Identity and clients | Local accounts, tenant membership, role guards, and audit event storage in `backend/app/domains/access/`. | Account now shows recent client or platform audit activity, scoped by administrator role. Verify tenant isolation in CI. |
+| 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Connect design review to observed inventory using the subscription, resource group, and ARM identity already available. Handle missing and ambiguous mappings explicitly. |
+| 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Connect observation evidence to alerts and verify supported metrics against a configured Azure subscription. |
+| 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Carry qualified evidence into incident investigation and retain the link back to the original finding. |
+| 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Connect Azure and imported findings to vulnerability ownership, SLA, and risk acceptance records. |
+| 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Map observed evidence to versioned controls and add manual review, corrective action, and assessment history. Design checks remain evidence for the controls they actually cover. |
+| 7 · DevSecOps, alerts, and incidents | `monitoring/alert_incident_workflow.py` and `incidents/` contain persisted alert and incident building blocks. | Secure the workflows with current client scope, connect evidence, and add assignment, RCA, and read-only GitHub metadata ingestion. |
+| 8 · Cost and recovery | `backend/app/domains/cost/` includes design estimates and Azure Cost Management parsing. | Scope actual costs to current client connections, then add budget and anomaly tracking plus backup and restore evidence. |
+| 9 · Reports and validation | `backend/app/domains/reports/` and existing report and dashboard workspaces provide reusable presentation and aggregation logic. | Authorize reports by client and derive summaries from persisted evidence. Complete integrated workflow validation. |
+
+Older MonitorAI, Monitor2.0, and Azure Architect Companion trees are read-only
+references. Product changes belong in the consolidated application. Azure is
+the initial cloud integration. AWS and GCP integrations remain deferred.
 
 GitHub Actions checks fresh PostgreSQL migrations, backend and frontend tests,
 and the production frontend build. Azure integration tests use mocked provider

@@ -27,6 +27,8 @@ def test_phase_one_access(monkeypatch):
     monkeypatch.setattr(azure, "check_subscription", fake_azure_check)
     with TestClient(app, base_url="https://testserver") as client:
         assert client.get(ARCH).status_code == 401
+        assert client.get("/api/audit").status_code == 401
+        assert client.get(AUTH + "/audit").status_code == 401
         assert client.post(AUTH + "/login", json={"username": "phase-one-admin", "password": PASSWORD}).status_code == 403
         signed_in = client.post(AUTH + "/login", headers=WRITE,
                                 json={"username": "phase-one-admin", "password": PASSWORD})
@@ -69,6 +71,12 @@ def test_phase_one_access(monkeypatch):
         assert client.get(AZURE + "/status", headers=second).json()["enabled"] is False
         assert client.get(ARCH, headers=second).json() == []
         assert client.delete(resource_path, headers=second).status_code == 404
+        platform_events = client.get(AUTH + "/audit", headers=first).json()
+        assert any(event["action"] == "create_user" and event["target"] == editor for event in platform_events)
+        assert all(event["action"] != "create_client" for event in platform_events)
+        first_events = client.get("/api/audit", headers=first).json()
+        assert any(event["action"] == "save_azure_connection" for event in first_events)
+        assert all(event["action"] != "create_user" for event in first_events)
 
         admin_token = client.cookies.get("monitorai_session")
         client.cookies.clear()
@@ -76,6 +84,9 @@ def test_phase_one_access(monkeypatch):
                            json={"username": editor, "password": PASSWORD}).status_code == 200
         assert client.get(architecture_path, headers=first).status_code == 200
         assert client.get(architecture_path, headers=second).status_code == 404
+        assert client.get("/api/audit", headers=first).status_code == 403
+        assert client.get("/api/audit", headers=second).status_code == 403
+        assert client.get(AUTH + "/audit").status_code == 403
         assert client.delete(resource_path, headers={**WRITE, "X-Client-ID": str(uuid4())}).status_code == 403
         assert client.put(resource_path, headers=second, json={"name": "cross-client"}).status_code == 403
         assert client.post(ARCH, headers=second, json={"name": "Forbidden"}).status_code == 403
@@ -92,6 +103,23 @@ def test_phase_one_access(monkeypatch):
                            json={"new_password": PASSWORD}).status_code == 204
         revoked = client.get(AUTH + "/me", headers={"Cookie": f"monitorai_session={member_token}"})
         assert revoked.status_code == 401
+
+        assert client.post(f"{AUTH}/clients/{clients[1]}/members", headers=WRITE,
+                           json={"username": editor, "role": "admin"}).status_code == 204
+        client.cookies.clear()
+        assert client.post(AUTH + "/login", headers=WRITE,
+                           json={"username": editor, "password": PASSWORD}).status_code == 200
+        scoped = client.get("/api/audit", headers=second)
+        assert scoped.status_code == 200, scoped.text
+        events = scoped.json()
+        assert any(event["action"] == "set_membership" and event["target"] == editor for event in events)
+        assert {event["action"] for event in events}.isdisjoint(
+            {"save_azure_connection", "create_user", "architecture_access"}
+        )
+        assert client.get("/api/audit", headers=first).status_code == 403
+        assert client.get(AUTH + "/audit").status_code == 403
+        client.cookies.clear()
+        client.cookies.set("monitorai_session", admin_token)
 
         token = admin_token
         assert client.post(AUTH + "/logout", headers=WRITE).status_code == 204

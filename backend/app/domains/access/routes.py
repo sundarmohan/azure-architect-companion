@@ -18,6 +18,7 @@ from app.db.session import SessionLocal
 from .models import Account, AuditEvent, Client, LoginSession, Membership
 
 router = APIRouter()
+audit_router = APIRouter()
 hasher = PasswordHasher()
 dummy_hash = hasher.hash(secrets.token_urlsafe(32))
 COOKIE = "monitorai_session"
@@ -56,6 +57,15 @@ class NewClient(BaseModel):
 class MemberWrite(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     role: Literal["admin", "editor", "viewer"]
+
+
+class AuditEventRead(BaseModel):
+    id: UUID
+    occurred_at: datetime
+    actor: str | None
+    action: str
+    target: str | None
+    outcome: str
 
 
 async def get_db():
@@ -150,6 +160,32 @@ async def client_admin(request: Request, client_id: UUID = Depends(client_access
     if request.state.client_role != "admin":
         raise HTTPException(403, "Client administrator required")
     return client_id
+
+
+async def recent_audit_events(db: AsyncSession, client_id: UUID | None, platform: bool):
+    query = (
+        select(AuditEvent.id, AuditEvent.occurred_at, Account.username.label("actor"),
+               AuditEvent.action, AuditEvent.target, AuditEvent.outcome)
+        .outerjoin(Account, Account.id == AuditEvent.account_id)
+        .where(AuditEvent.client_id == client_id)
+        .order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc())
+        .limit(50)
+    )
+    if not platform:
+        # Denied boundary checks can contain identities or targets from other tenants.
+        query = query.where(AuditEvent.action.not_in(("client_access", "architecture_access")))
+    return (await db.execute(query)).mappings().all()
+
+
+@router.get("/audit", response_model=list[AuditEventRead])
+async def platform_audit(_actor: Account = Depends(platform_admin), db: AsyncSession = Depends(get_db)):
+    return await recent_audit_events(db, None, platform=True)
+
+
+@audit_router.get("/audit", response_model=list[AuditEventRead])
+async def client_audit(client_id: UUID = Depends(client_admin), db: AsyncSession = Depends(get_db),
+                       actor: Account = Depends(current_account)):
+    return await recent_audit_events(db, client_id, platform=actor.is_platform_admin)
 
 
 @router.post("/login")

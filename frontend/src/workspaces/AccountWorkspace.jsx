@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { changePassword, createClient, createUser, login, resetUserPassword, setClientMember } from "../services/api";
+import { useEffect, useState } from "react";
+import { changePassword, createClient, createUser, getClientAudit, getPlatformAudit, login, resetUserPassword, setClientMember } from "../services/api";
 
 export function SignInForm({ notice, onSignIn }) {
   const [busy, setBusy] = useState(false);
@@ -65,6 +65,63 @@ function AccountForm({ title, action, result, onSubmit, children }) {
   </form>;
 }
 
+function AuditEvents({ platform }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [refresh, setRefresh] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = platform ? getPlatformAudit : getClientAudit;
+    load(controller.signal).then((items) => {
+      if (!controller.signal.aborted) setEvents(items);
+    }).catch((failure) => {
+      if (!controller.signal.aborted) setError(failure.message);
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
+  }, [platform, refresh]);
+
+  return <>
+    <div><button type="button" disabled={loading} onClick={() => {
+      setLoading(true);
+      setError("");
+      setRefresh((version) => version + 1);
+    }}>Refresh audit events</button></div>
+    {loading ? <p role="status">Loading audit events…</p> : error ? <p className="error" role="alert">{error}</p>
+      : events.length === 0 ? <p>No audit events in this scope.</p>
+      : <div className="audit-events-table">
+        <table aria-label="Recent audit events">
+          <thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Outcome</th></tr></thead>
+          <tbody>{events.map((event) => <tr key={event.id}>
+            <td><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time></td>
+            <td>{event.actor ?? "Unknown"}</td>
+            <td>{event.action.replaceAll("_", " ")}</td>
+            <td>{event.target ?? "—"}</td>
+            <td>{event.outcome}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+  </>;
+}
+
+function AuditHistory({ user, client }) {
+  const [scope, setScope] = useState(client ? "client" : "platform");
+  return <section className="card account-form">
+    <h2>Audit history</h2>
+    <p>Latest 50 events for the selected scope.</p>
+    {user.is_platform_admin && client && <label>Audit scope
+      <select value={scope} onChange={(event) => setScope(event.target.value)}>
+        <option value="client">{client.client_name}</option>
+        <option value="platform">Platform activity</option>
+      </select>
+    </label>}
+    <AuditEvents key={scope} platform={scope === "platform"} />
+  </section>;
+}
+
 export function AccountWorkspace({ user, client, onMembershipChange, onPasswordChanged }) {
   const canManageMembers = client && user.is_platform_admin;
 
@@ -108,5 +165,6 @@ export function AccountWorkspace({ user, client, onMembershipChange, onPasswordC
         </select></label>
       </AccountForm>}
     </div>
+    {(user.is_platform_admin || client?.role === "admin") && <AuditHistory user={user} client={client} />}
   </section>;
 }

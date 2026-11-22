@@ -53,6 +53,21 @@
   align-items: start;
 }
 
+.audit-events-table {
+  overflow-x: auto;
+}
+
+.audit-events-table table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.audit-events-table :is(th, td) {
+  padding: 8px;
+  border-bottom: 1px solid #dfe4ed;
+}
+
 .session-controls {
   display: flex;
   align-items: center;
