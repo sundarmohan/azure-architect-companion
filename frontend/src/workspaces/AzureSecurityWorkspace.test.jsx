@@ -84,6 +84,7 @@ describe("Azure Security workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     expect(await screen.findByText("Some Azure data could not be collected.")).toBeInTheDocument();
     expect(screen.getByText("Showing the last available data.")).toBeInTheDocument();
+    expect(screen.getByText("Triage is based on retained findings from the last complete collection.")).toBeInTheDocument();
     expect(screen.getByText("Broad inbound NSG rule")).toBeInTheDocument();
     await waitFor(() => expect(refreshAzureSecurity).toHaveBeenCalledWith(SUBSCRIPTION));
   });
@@ -126,5 +127,47 @@ describe("Azure Security workspace", () => {
     expect(updateAzureFindingTracking).toHaveBeenCalledWith(SUBSCRIPTION, FINDING_ID, {
       status: "in_progress", owner: "Security operations", due_date: "2026-11-30",
     });
+  });
+
+  it("triages overdue and unassigned work and updates the open queue after a save", async () => {
+    const [rule, alert] = snapshot.findings;
+    getAzureSecurity.mockResolvedValue({
+      ...snapshot,
+      status: "partial_failure",
+      last_success_at: null,
+      findings: [
+        { ...rule, id: FINDING_ID },
+        { ...alert, id: "b".repeat(64), tracking: {
+          status: "in_progress", owner: "Operations", due_date: "2000-01-01",
+        } },
+        { ...alert, title: "Previously resolved alert", id: "c".repeat(64), tracking: {
+          status: "resolved", owner: null, due_date: "2000-01-01",
+        } },
+      ],
+    });
+    updateAzureFindingTracking.mockResolvedValue({ status: "resolved", owner: "Operations", due_date: null });
+    render(<AzureSecurityWorkspace canRefresh />);
+
+    expect(await screen.findByText("Triage is based on incomplete Azure evidence.")).toBeInTheDocument();
+    expect(screen.getByText("Outstanding 2 · Overdue 1 · Unassigned 1")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Needs attention"), { target: { value: "overdue" } });
+    expect(screen.getByText("Defender alert")).toBeInTheDocument();
+    expect(screen.queryByText("Previously resolved alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(rule.title)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Needs attention"), { target: { value: "unassigned" } });
+    expect(screen.getByText(rule.title)).toBeInTheDocument();
+    expect(screen.queryByText("Defender alert")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Needs attention"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Tracking status"), { target: { value: "open" } });
+    fireEvent.click(screen.getByText("Remediation tracking · Open"));
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "resolved" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save tracking" }));
+    expect(await screen.findByText("No findings match the filters.")).toBeInTheDocument();
+    expect(screen.getByText("Remediation tracking saved.")).toBeInTheDocument();
+    expect(screen.getByText("Outstanding 1 · Overdue 1 · Unassigned 0")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Tracking status"), { target: { value: "resolved" } });
+    expect(screen.getByText(rule.title)).toBeInTheDocument();
+    expect(screen.getByText("Previously resolved alert")).toBeInTheDocument();
   });
 });

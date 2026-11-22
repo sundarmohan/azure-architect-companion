@@ -57,7 +57,7 @@ previous Azure Architect Companion repo, whose CI/CD and EC2 target it reuses).
 | 1 · Identity and clients | Local accounts, tenant membership, role guards, and audit event storage in `backend/app/domains/access/`. | Account now shows recent client or platform audit activity, scoped by administrator role. CI covers tenant isolation. |
 | 2 · Architecture and inventory | Architecture lifecycle, editable graph, exports, and client-scoped Azure inventory. | Design Details now compares top-level resources in a mapped subscription with its latest completed inventory, including missing, ambiguous, and stale results. Child resources need a separate matching model. |
 | 3 · Monitoring and network | Scheduled Azure observations, network evidence, and diagnostics in `backend/app/domains/monitoring/`. | Monitoring exposes resource health evidence for triage. Persisted alert acknowledgement and live Azure validation remain open. |
-| 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Carry qualified evidence into incident investigation and retain the link back to the original finding. |
+| 4 · Security and threats | Defender inputs, posture rules, activity signals, and remediation tracking. | Triage remediation by tracking status in the current evidence snapshot. Linking findings to incident investigations remains open. |
 | 5 · Assessment records | Authorized assessment scope, sanitized finding imports, deduplication, and human retest history. | Connect Azure and imported findings to vulnerability ownership, SLA, and risk acceptance records. |
 | 6 · Compliance | `backend/app/domains/governance/` contains reusable design checks. The older Monitor2.0 governance reference has examples for the other frameworks. | Map observed evidence to versioned controls and add manual review, corrective action, and assessment history. Design checks remain evidence for the controls they actually cover. |
 | 7 · DevSecOps, alerts, and incidents | `monitoring/alert_incident_workflow.py` and `incidents/` contain persisted alert and incident building blocks. | Secure the workflows with current client scope, connect evidence, and add assignment, RCA, and read-only GitHub metadata ingestion. |
@@ -98,7 +98,9 @@ Refresh Network Intelligence beforehand to include its configured exposure
 evidence.
 
 Each finding shows its evidence and suggested review action. Record an owner,
-due date, and tracking status in MonitorAI. Tracking changes affect local
+due date, and tracking status in MonitorAI. Use the tracking filters to review
+outstanding work from the selected subscription. The queue reflects the
+displayed snapshot and flags incomplete or retained evidence. Tracking changes affect local
 records only. The risk score sums finding severity weights, capped at 100.
 A score applies to available evidence and does not certify the environment.
 Missing Azure permissions and unsupported sources are identified separately.

@@ -6,6 +6,7 @@ const SEVERITIES = ["critical", "high", "medium", "low", "informational"];
 const PAGE_SIZE = 20;
 const NUMBER_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const TRACKING_STATUSES = ["open", "in_progress", "resolved", "accepted"];
+const TRACKING_ID = /^[a-f0-9]{64}$/;
 
 function severityRank(severity) {
   const rank = SEVERITIES.indexOf(severity?.toLowerCase());
@@ -17,17 +18,16 @@ function FindingEvidence({ evidence }) {
   return <ul>{evidence.map((text, index) => <li key={index}>{text}</li>)}</ul>;
 }
 
-function FindingTracking({ finding, subscription, canEdit, onSave }) {
+function FindingTracking({ finding, subscription, canEdit, onSave, onSaveStart }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const { status = "open", owner, due_date } = finding.tracking || {};
 
   async function save(event) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    setMessage("");
+    onSaveStart();
     const fields = new FormData(event.currentTarget);
     try {
       const saved = await updateAzureFindingTracking(subscription, finding.id, {
@@ -36,7 +36,6 @@ function FindingTracking({ finding, subscription, canEdit, onSave }) {
         due_date: fields.get("due_date") || null,
       });
       onSave(finding.id, saved);
-      setMessage("Remediation tracking saved.");
     } catch (failure) {
       if (failure.name !== "AbortError") setError(failure.message);
     } finally {
@@ -61,7 +60,6 @@ function FindingTracking({ finding, subscription, canEdit, onSave }) {
       </fieldset>
     </form>}
     {error && <p role="alert" className="error">{error}</p>}
-    {message && <p role="status">{message}</p>}
   </details>;
 }
 
@@ -70,6 +68,9 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
   const [source, setSource] = useState("");
   const [category, setCategory] = useState("");
   const [filter, setFilter] = useState("");
+  const [trackingStatus, setTrackingStatus] = useState("");
+  const [attention, setAttention] = useState("");
+  const [trackingSaved, setTrackingSaved] = useState(false);
   const [page, setPage] = useState(0);
   const findings = snapshot.findings || [];
   const score = snapshot.score;
@@ -81,12 +82,29 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
   const activeSource = sources.includes(source) ? source : "";
   const activeCategory = categories.includes(category) ? category : "";
   const search = filter.trim().toLowerCase();
-  const matching = findings.filter((item) => (
+  const today = new Date();
+  const localDate = [today.getFullYear(), today.getMonth() + 1, today.getDate()]
+    .map((part) => String(part).padStart(2, "0")).join("-");
+  const triage = findings.map((item) => {
+    const status = TRACKING_ID.test(item.id || "") ? item.tracking?.status || "open" : null;
+    const outstanding = status === "open" || status === "in_progress";
+    return {
+      item,
+      status,
+      outstanding,
+      overdue: outstanding && Boolean(item.tracking?.due_date && item.tracking.due_date < localDate),
+      unassigned: outstanding && !item.tracking?.owner?.trim(),
+    };
+  });
+  const matching = triage.filter(({ item, status, overdue, unassigned }) => (
     (!activeSeverity || item.severity === activeSeverity) &&
     (!activeSource || item.source === activeSource) &&
     (!activeCategory || item.category === activeCategory) &&
+    (!trackingStatus || status === trackingStatus) &&
+    (attention !== "overdue" || overdue) &&
+    (attention !== "unassigned" || unassigned) &&
     (!search || [item.code, item.title, item.resource_id].some((value) => value?.toLowerCase().includes(search)))
-  )).sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
+  )).sort((left, right) => severityRank(left.item.severity) - severityRank(right.item.severity));
   const pageCount = Math.ceil(matching.length / PAGE_SIZE);
   const currentPage = Math.min(page, Math.max(0, pageCount - 1));
 
@@ -111,6 +129,14 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
     </section>
     <section className="card account-form">
       <h2>Findings ({findings.length})</h2>
+      {trackingSaved && <p role="status">Remediation tracking saved.</p>}
+      {findings.length > 0 && <>
+        <p>Tracking reflects local remediation decisions for the findings in this snapshot. Azure evidence is reviewed separately.</p>
+        <p>Outstanding {triage.filter((row) => row.outstanding).length} · Overdue {triage.filter((row) => row.overdue).length} · Unassigned {triage.filter((row) => row.unassigned).length}</p>
+        {snapshot.status !== "synced" && <p>{snapshot.last_success_at
+          ? "Triage is based on retained findings from the last complete collection."
+          : "Triage is based on incomplete Azure evidence."}</p>}
+      </>}
       {findings.length > 0 && <div className="grid">
         <label>Filter findings<input value={filter} placeholder="Title, code, or Azure resource ID"
           onChange={(event) => { setFilter(event.target.value); setPage(0); }} /></label>
@@ -126,9 +152,18 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
           <option value="">All categories</option>
           {categories.map((value) => <option key={value} value={value}>{displayLabel(value)}</option>)}
         </select></label>}
+        <label>Tracking status<select value={trackingStatus} onChange={(event) => { setTrackingStatus(event.target.value); setPage(0); }}>
+          <option value="">All tracking statuses</option>
+          {TRACKING_STATUSES.map((value) => <option key={value} value={value}>{displayLabel(value)}</option>)}
+        </select></label>
+        <label>Needs attention<select value={attention} onChange={(event) => { setAttention(event.target.value); setPage(0); }}>
+          <option value="">Any</option>
+          <option value="overdue">Overdue</option>
+          <option value="unassigned">Unassigned</option>
+        </select></label>
       </div>}
       {matching.length > 0 ? <ul className="design-list">
-        {matching.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map((item, index) => (
+        {matching.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(({ item, status, overdue, unassigned }, index) => (
           <li key={item.id || `${item.source}-${item.code}-${item.resource_id}-${index}`}>
             <strong>{item.title}</strong>
             <span>{displayLabel(item.severity)} · {displayLabel(item.source)} · {item.code}</span>
@@ -138,9 +173,14 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
             ].filter(Boolean).join(" · ")}</span>}
             {item.resource_id && <span>Resource {item.resource_id}</span>}
             {item.recommendation && <p>{item.recommendation}</p>}
+            {(overdue || unassigned) && <span>{[overdue && "Overdue", unassigned && "Unassigned"].filter(Boolean).join(" · ")}</span>}
             <details><summary>Evidence</summary><FindingEvidence evidence={item.evidence} /></details>
-            {/^[a-f0-9]{64}$/i.test(item.id || "") && <FindingTracking finding={item}
-              subscription={subscription} canEdit={canEdit} onSave={onSaveTracking} />}
+            {status && <FindingTracking finding={item}
+              subscription={subscription} canEdit={canEdit} onSaveStart={() => setTrackingSaved(false)}
+              onSave={(id, tracking) => {
+                onSaveTracking(id, tracking);
+                setTrackingSaved(true);
+              }} />}
           </li>
         ))}
       </ul> : <p>{findings.length ? "No findings match the filters." : "No findings in the current snapshot."}</p>}
