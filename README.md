@@ -89,14 +89,14 @@ module breadth rather than percent complete.
 | 5 | Network Intelligence | Working core | Configured topology, DNS, routes, NSGs, firewalls, exposure, and aggregate traffic counters. Flow-level attribution and effective reachability remain open. |
 | 6 | Cybersecurity Engine | Partial | Configuration and IAM checks, Defender feeds where available, explainable risk, and remediation triage. Deeper identity, patch, and vulnerability coverage remains open. |
 | 7 | Ethical Hacking | Working core | Authorized scope records, sanitized evidence imports, finding lifecycle, human retesting, and JSON exports. Testing and scanning are human-led outside the application. |
-| 8 | Vulnerability Management | Partial | Sanitized scanner-result imports, deduplication, severity, ownership, due dates, and remediation tracking already work. The portfolio brings these records together and includes related Defender evidence. Policy SLAs and risk acceptance remain open. |
+| 8 | Vulnerability Management | Partial | Sanitized scanner-result imports, deduplication, severity, ownership, due dates, and remediation tracking already work. The portfolio brings these records together and includes related Defender evidence. Client administrators can record expiring risk acceptance for imported findings. Policy SLAs remain open. |
 | 9 | Threat Detection | Partial | Selected Azure Activity patterns and Defender alerts are displayed. Broader event correlation and incident investigations remain open. |
 | 10 | DevSecOps | Partial | The workspace reads recent workflow run evidence from public GitHub repositories. Private repository connections and dependency, image, secret, and IaC finding workflows remain open. |
 | 11 | Compliance Engine | Partial | The active Compliance workspace reviews saved Azure technical evidence. Supports recorded technical reviews and corrective actions. Framework catalogs, review history, and reporting remain open. |
 | 12 | Alerts & Incidents | Partial | Monitoring supports acknowledgement of saved health evidence. Operators can create linked incidents and record ownership, status, and RCA notes. Escalation, notifications, and corrective action workflows remain open. |
 | 13 | Cost Management | Partial | Design estimates, actual Azure costs, and local monthly budget comparisons are active. Anomaly detection and optimization remain open. |
-| 14 | Backup & DR | Partial | Backup shows bounded job, restore, protected item, and supported retention evidence from inventoried Recovery Services vaults. RPO/RTO validation remains open. |
-| 15 | Reports | Partial | Overview exports a subscription evidence summary. Assessment and design exports remain available. General technical, compliance, and executive reporting still need integration. |
+| 14 | Backup & DR | Partial | Backup shows bounded job, restore, protected item, and supported retention evidence from inventoried Recovery Services vaults. Observed recovery point age and restore duration can be compared against operator targets. End-to-end recovery testing remains open. |
+| 15 | Reports | Partial | Reports exports technical, security, compliance, and executive evidence summaries for a selected subscription. Full report templates, cross-subscription rollups, and scheduled delivery remain open. |
 | 16 | Administration | Working core | Local accounts, multi-client workspaces, role assignment, encrypted Azure credentials, and scoped audit review. Broader policy and integration administration remain open. |
 
 ## Phase 7 monitoring alert acknowledgement

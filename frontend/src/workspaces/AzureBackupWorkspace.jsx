@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { getAzureBackupEvidence } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
@@ -14,6 +15,50 @@ const ITEM_FIELDS = [
 const POLICY_FIELDS = [
   ["name", "Policy"], ["backupManagementType", "Management type"], ["retention", "Retention"],
 ];
+
+export function compareRecoveryEvidence(vault, retrievedAt, rpoHours, rtoMinutes) {
+  const retrieved = Date.parse(retrievedAt);
+  const pointLimit = rpoHours * 60 * 60 * 1000;
+  const durationLimit = rtoMinutes * 60 * 1000;
+  const points = vault.protected_items.rows.map((item) => retrieved - Date.parse(item.lastRecoveryPoint))
+    .filter((age) => Number.isFinite(age) && age >= 0);
+  const restores = vault.jobs.rows.filter((job) =>
+    job.operation?.toLowerCase() === "restore" && job.status?.toLowerCase() === "completed")
+    .map((job) => Date.parse(job.endTime) - Date.parse(job.startTime))
+    .filter((duration) => Number.isFinite(duration) && duration >= 0);
+  return {
+    recoveryPoints: points.length, pointsOutside: points.filter((age) => age > pointLimit).length,
+    restoreJobs: restores.length, restoresOutside: restores.filter((duration) => duration > durationLimit).length,
+  };
+}
+
+function RecoveryObjectives({ vaults, retrievedAt }) {
+  const [rpoHours, setRpoHours] = useState("");
+  const [rtoMinutes, setRtoMinutes] = useState("");
+  const usable = Number(rpoHours) > 0 && Number(rtoMinutes) > 0;
+  return <section className="account-form">
+    <h3>Recovery objectives review</h3>
+    <p>Compare observed recovery point age and completed restore job duration with your targets. Application recovery and unobserved resources require further evidence.</p>
+    <div className="grid">
+      <label>Recovery point objective (hours)<input type="number" min="1" value={rpoHours} onChange={(event) => setRpoHours(event.target.value)} /></label>
+      <label>Recovery time objective (minutes)<input type="number" min="1" value={rtoMinutes} onChange={(event) => setRtoMinutes(event.target.value)} /></label>
+    </div>
+    {usable && <ul aria-label="Observed recovery comparison">
+      {vaults.map((vault) => {
+        const evidence = compareRecoveryEvidence(vault, retrievedAt, Number(rpoHours), Number(rtoMinutes));
+        return <li key={vault.id}>
+          <strong>{vault.name}</strong>
+          <p>{evidence.recoveryPoints
+            ? `${evidence.pointsOutside} of ${evidence.recoveryPoints} observed recovery points exceed the age target.`
+            : "Recovery point timestamps are unavailable."}</p>
+          <p>{evidence.restoreJobs
+            ? `${evidence.restoresOutside} of ${evidence.restoreJobs} completed restore jobs exceed the duration target.`
+            : "Completed restore job timing is unavailable."}</p>
+        </li>;
+      })}
+    </ul>}
+  </section>;
+}
 
 function EvidenceTable({ title, evidence, fields }) {
   return <section className="account-form">
@@ -38,6 +83,7 @@ export default function AzureBackupWorkspace() {
       {snapshot.status === "no_vaults_in_inventory" && <p>No Recovery Services vaults were found in the saved inventory.</p>}
       {snapshot.retrieved_at && <p>Retrieved {snapshotTime(snapshot.retrieved_at)}</p>}
       {snapshot.limitations?.length > 0 && <ul>{snapshot.limitations.map((item) => <li key={item}>{item}</li>)}</ul>}
+      {snapshot.vaults.length > 0 && <RecoveryObjectives vaults={snapshot.vaults} retrievedAt={snapshot.retrieved_at} />}
       {snapshot.vaults.map((vault) => <section key={vault.id} className="card account-form">
         <h3>{vault.name}</h3>
         <EvidenceTable title="Backup and restore jobs" evidence={vault.jobs} fields={JOB_FIELDS} />

@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.domains.assessments.routes import RiskAcceptanceRead
 from app.main import app
 from tests.test_local_access import PASSWORD, WRITE
 
@@ -46,6 +48,27 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         }).status_code == 200
         assert client.get(PATH + "/portfolio", headers=foreign).json() == {"findings": [], "has_next": False}
         finding = f"{assessment}/findings/{client.get(assessment, headers=own).json()['findings'][0]['id']}"
+        risk = finding + "/risk-acceptance"
+        today = datetime.now(timezone.utc).date()
+        decision = {"rationale": "Approved temporary exception", "expires_on": str(today + timedelta(days=10))}
+        assert client.put(risk, headers=own, json={**decision, "expires_on": str(today)}).status_code == 422
+        assert client.put(risk, headers=own, json={**decision, "rationale": " "}).status_code == 422
+        assert client.put(risk, headers=foreign, json=decision).status_code == 404
+        recorded = client.put(risk, headers=own, json=decision)
+        assert recorded.status_code == 200, recorded.text
+        first_decision = recorded.json()
+        assert first_decision["actor_username"] == "phase-one-admin" and first_decision["active"]
+        assert client.put(risk, headers=own, json=decision).json() == first_decision
+        replacement = {**decision, "rationale": "Updated exception rationale"}
+        assert client.put(risk, headers=own, json=replacement).status_code == 409
+        changed = client.put(risk, headers=own, json={**replacement, "previous_id": first_decision["id"]})
+        assert changed.status_code == 200, changed.text
+        updated_decision = changed.json()
+        assert updated_decision["id"] != first_decision["id"]
+        current = client.get(assessment, headers=own).json()["findings"][0]
+        assert current["status"] == "open" and current["risk_acceptance"] == updated_decision
+        events = client.get("/api/audit", headers=own).json()
+        assert sum(event["action"] == "record_vulnerability_risk_acceptance" for event in events) == 2
         assert client.put(finding, headers=own, json={"status": "closed"}).status_code == 409
         for status in ("confirmed", "in_remediation", "ready_for_retest"):
             assert client.put(finding, headers=own, json={"status": status}).status_code == 200
@@ -53,6 +76,8 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         closed = client.put(finding, headers=own, json={"status": "closed", "retest_note": "Human retest passed",
                                                        "owner": "Operations", "due_date": "2026-02-01"})
         assert closed.status_code == 200 and closed.json()["retest_note"] == "Human retest passed"
+        assert closed.json()["risk_acceptance"] == updated_decision
+        assert client.put(risk, headers=own, json={**decision, "previous_id": updated_decision["id"]}).status_code == 409
         history = client.get(assessment, headers=own).json()["findings"][0]["history"]
         assert [event["status"] for event in history] == ["confirmed", "in_remediation", "ready_for_retest", "closed"]
 
@@ -63,6 +88,8 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         client.cookies.clear()
         assert client.post("/api/auth/login", headers=WRITE, json={"username": username, "password": PASSWORD}).status_code == 200
         assert client.get(assessment, headers=own).status_code == 200
+        assert client.get(assessment, headers=own).json()["findings"][0]["risk_acceptance"] == updated_decision
+        assert client.put(risk, headers=own, json=decision).status_code == 403
         portfolio = client.get(PATH + "/portfolio", headers=own)
         assert portfolio.status_code == 200, portfolio.text
         data = portfolio.json()
@@ -75,3 +102,10 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         assert client.get(PATH + "/portfolio", headers=foreign).status_code == 403
         assert client.post(PATH, headers=own, json=details).status_code == 403
         assert client.put(finding, headers=own, json={"status": "open"}).status_code == 403
+
+
+def test_risk_acceptance_flags_utc_expiry():
+    now = datetime.now(timezone.utc)
+    decision = RiskAcceptanceRead(id=uuid4(), rationale="Reviewed", expires_on=now.date(),
+                                  actor_username="reviewer", created_at=now - timedelta(days=1))
+    assert decision.model_dump()["active"] is False

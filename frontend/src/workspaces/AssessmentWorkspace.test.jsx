@@ -1,13 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AssessmentWorkspace from "./AssessmentWorkspace";
-import { createAssessment, getAssessment, importAssessmentFindings, listAssessments, updateAssessmentFinding } from "../services/api";
+import { createAssessment, getAssessment, importAssessmentFindings, listAssessments, recordAssessmentRiskAcceptance, updateAssessmentFinding } from "../services/api";
 
 vi.mock("../services/api", () => ({
   createAssessment: vi.fn(),
   getAssessment: vi.fn(),
   importAssessmentFindings: vi.fn(),
   listAssessments: vi.fn(),
+  recordAssessmentRiskAcceptance: vi.fn(),
   updateAssessmentFinding: vi.fn(),
 }));
 
@@ -115,5 +116,31 @@ describe("Assessments and Vulnerabilities workspace", () => {
     expect(updateAssessmentFinding).toHaveBeenCalledWith(assessment.id, finding.id, {
       status: "closed", owner: finding.owner, due_date: finding.due_date, retest_note: "Rechecked.",
     });
+  });
+
+  it("records a separate time-bound decision for administrators and displays it to viewers", async () => {
+    const decision = { id: "decision", rationale: "Temporary exception", expires_on: "2026-12-15",
+      actor_username: "risk-admin", created_at: "2026-11-23T11:00:00Z", active: true };
+    recordAssessmentRiskAcceptance.mockResolvedValue(decision);
+    const { rerender } = render(<AssessmentWorkspace canEdit canManageRisk />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Staging review" }));
+    fireEvent.click(await screen.findByText("Risk acceptance"));
+    fireEvent.change(screen.getByLabelText("Risk acceptance rationale"), { target: { value: decision.rationale } });
+    fireEvent.change(screen.getByLabelText("Risk acceptance expiry (UTC)"), { target: { value: decision.expires_on } });
+    fireEvent.click(screen.getByRole("button", { name: "Record risk acceptance" }));
+
+    expect(await screen.findByText("Risk acceptance - Active")).toBeInTheDocument();
+    expect(screen.getByText("risk-admin")).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Ready for retest") && text.includes(finding.source))).toBeInTheDocument();
+    expect(recordAssessmentRiskAcceptance).toHaveBeenCalledWith(assessment.id, finding.id, {
+      rationale: decision.rationale, expires_on: decision.expires_on, previous_id: null,
+    });
+    expect(updateAssessmentFinding).not.toHaveBeenCalled();
+
+    rerender(<AssessmentWorkspace canEdit />);
+    expect(screen.getByText("Risk acceptance - Active")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Risk acceptance rationale")).not.toBeInTheDocument();
+    rerender(<AssessmentWorkspace canEdit={false} />);
+    expect(screen.getByText("risk-admin")).toBeInTheDocument();
   });
 });

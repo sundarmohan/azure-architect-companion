@@ -8,6 +8,7 @@ import {
 } from "../services/api";
 import { displayLabel } from "./AzureSnapshotWorkspace";
 import VulnerabilityPortfolio from "./VulnerabilityPortfolio";
+import FindingRiskAcceptance from "./FindingRiskAcceptance";
 
 const SEVERITIES = ["critical", "high", "medium", "low", "informational"];
 const STATUSES = ["open", "confirmed", "in_remediation", "ready_for_retest", "closed"];
@@ -164,7 +165,7 @@ function ImportFindings({ id, onImport }) {
   </form>;
 }
 
-function AssessmentFinding({ assessmentId, finding, canEdit, onSave }) {
+function AssessmentFinding({ assessmentId, finding, canEdit, canManageRisk, onSave, onRiskRecorded }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -219,6 +220,8 @@ function AssessmentFinding({ assessmentId, finding, canEdit, onSave }) {
         {event.note && <p>{event.note}</p>}
       </li>)}</ol>
     </details>}
+    <FindingRiskAcceptance assessmentId={assessmentId} finding={finding}
+      canManage={canManageRisk} onRecord={onRiskRecorded} />
     {canEdit && <details>
       <summary>Update finding</summary>
       <form className="account-form" key={JSON.stringify([finding.status, finding.owner, finding.due_date, finding.retest_note])} onSubmit={save}>
@@ -238,7 +241,7 @@ function AssessmentFinding({ assessmentId, finding, canEdit, onSave }) {
   </li>;
 }
 
-function AssessmentDetail({ assessment, canEdit, onBack, onImport, onSave }) {
+function AssessmentDetail({ assessment, canEdit, canManageRisk, onBack, onImport, onSave, onRiskRecorded }) {
   const [severity, setSeverity] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(0);
@@ -280,7 +283,8 @@ function AssessmentDetail({ assessment, canEdit, onBack, onImport, onSave }) {
       </div>}
       {filtered.length > 0 ? <ul className="design-list">
         {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map((finding) => (
-          <AssessmentFinding key={finding.id} assessmentId={assessment.id} finding={finding} canEdit={canEdit} onSave={onSave} />
+          <AssessmentFinding key={finding.id} assessmentId={assessment.id} finding={finding}
+            canEdit={canEdit} canManageRisk={canManageRisk} onSave={onSave} onRiskRecorded={onRiskRecorded} />
         ))}
       </ul> : <p>{findings.length ? "No findings match these filters." : "No findings have been imported."}</p>}
       {pages > 1 && <div className="actions">
@@ -292,7 +296,7 @@ function AssessmentDetail({ assessment, canEdit, onBack, onImport, onSave }) {
   </>;
 }
 
-export default function AssessmentWorkspace({ canEdit }) {
+export default function AssessmentWorkspace({ canEdit, canManageRisk }) {
   const [assessments, setAssessments] = useState(null);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -339,9 +343,14 @@ export default function AssessmentWorkspace({ canEdit }) {
       {showPortfolio ? "Hide vulnerability portfolio" : "Open vulnerability portfolio"}
     </button></div>}
     {!selected && showPortfolio && <VulnerabilityPortfolio onOpenAssessment={openAssessment} opening={loadingDetail} />}
-    {selected ? <AssessmentDetail key={selected.id} assessment={selected} canEdit={canEdit}
+    {selected ? <AssessmentDetail key={selected.id} assessment={selected} canEdit={canEdit} canManageRisk={canManageRisk}
       onBack={() => setSelected(null)}
       onImport={() => reloadDetails(selected.id)}
+      onRiskRecorded={(findingId, decision) => setSelected((current) => current?.id === selected.id ? ({
+        ...current,
+        findings: current.findings.map((finding) => finding.id === findingId
+          ? { ...finding, risk_acceptance: decision } : finding),
+      }) : current)}
       onSave={async (next) => {
         setSelected((current) => current?.id === selected.id ? ({
           ...current,

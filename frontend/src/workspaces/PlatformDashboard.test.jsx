@@ -31,7 +31,8 @@ it("loads the selected subscription, keeps unavailable sources distinct, and lin
   expect(onOpen).toHaveBeenCalledWith("security");
   fireEvent.change(screen.getByLabelText("Subscription"), { target: { value: "sub-b" } });
   expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+  expect(getAzureHealthIncidents.mock.calls).toEqual([["sub-a", 1], ["sub-b", 1]]);
   for (const load of [getAzureInventory, getAzureMonitoring, getAzureSecurity, getAzureHealthIncidents, getComplianceReviews]) {
-    expect(load.mock.calls).toEqual([["sub-a"], ["sub-b"]]);
+    expect(load.mock.calls.map(([id]) => id)).toEqual(["sub-a", "sub-b"]);
   }
 });

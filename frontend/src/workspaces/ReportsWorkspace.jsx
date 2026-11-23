@@ -1,5 +1,49 @@
 import { useEffect, useState } from "react";
-import { getArchitectureExecutiveReport, listArchitectures } from "../services/api";
+import {
+  getAzureConnectionStatus, getAzureHealthIncidents, getAzureInventory, getAzureMonitoring,
+  getAzureSecurity, getComplianceReviews,
+} from "../services/api";
+import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
+
+const ROW_LIMIT = 20;
+const SOURCES = {
+  inventory: {
+    label: "Azure Inventory", load: getAzureInventory,
+    rows: (data) => (data.resources || []).slice(0, ROW_LIMIT).map(({ id, type, location }) => ({ id, type, location })),
+    count: (data) => (data.resources || []).length,
+  },
+  monitoring: {
+    label: "Azure Resource Health and monitoring", load: getAzureMonitoring,
+    rows: (data) => (data.resources || []).slice(0, ROW_LIMIT).map(({ id, health, health_status, metrics_status }) =>
+      ({ id, health, health_status, metrics_status })),
+    count: (data) => (data.resources || []).length,
+  },
+  security: {
+    label: "Azure Security findings", load: getAzureSecurity,
+    rows: (data) => (data.findings || []).slice(0, ROW_LIMIT).map(({ code, source, severity, resource_id, observed_at, tracking }) =>
+      ({ code, source, severity, resource_id, observed_at, tracking_status: tracking?.status })),
+    count: (data) => (data.findings || []).length,
+  },
+  compliance: {
+    label: "MonitorAI compliance reviews", load: getComplianceReviews,
+    rows: (data) => data.slice(0, ROW_LIMIT).map(({ topic, state, action_status, due_date, evidence_at, updated_at }) =>
+      ({ topic, state, action_status, due_date, evidence_at, updated_at })),
+    count: (data) => data.length,
+  },
+  incidents: {
+    label: "MonitorAI health incidents", load: (subscription) => getAzureHealthIncidents(subscription, 1),
+    rows: (data) => (data.incidents || []).slice(0, ROW_LIMIT).map(({ id, resource_id, health, status, collected_at, updated_at }) =>
+      ({ id, resource_id, health, status, collected_at, updated_at })),
+    count: (data) => (data.incidents || []).length,
+  },
+};
+
+const REPORTS = {
+  technical: ["inventory", "monitoring", "incidents"],
+  security: ["security"],
+  compliance: ["compliance", "security"],
+  executive: ["inventory", "monitoring", "security", "compliance", "incidents"],
+};
 
 function downloadJson(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -8,204 +52,100 @@ function downloadJson(filename, data) {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export default function ReportsWorkspace() {
-  const [architectures, setArchitectures] = useState([]);
-  const [architectureId, setArchitectureId] = useState("");
-  const [provider, setProvider] = useState("auto");
-  const [includeActualCost, setIncludeActualCost] = useState(true);
+  const [subscriptions, setSubscriptions] = useState(null);
+  const [subscription, setSubscription] = useState("");
+  const [type, setType] = useState("technical");
   const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    async function loadArchitectures() {
-      try {
-        const items = await listArchitectures();
-        setArchitectures(items);
-        if (items[0]?.id) setArchitectureId(items[0].id);
-      } catch (e) {
-        setError(e.message || "Failed to load architectures");
-      }
-    }
-    loadArchitectures();
+    let active = true;
+    getAzureConnectionStatus().then((connection) => {
+      if (!active) return;
+      const configured = connection.configured_subscription_ids?.length
+        ? connection.configured_subscription_ids
+        : (connection.configured_subscription_id ? [connection.configured_subscription_id] : []);
+      setSubscriptions(configured);
+      setSubscription(configured[0] || "");
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setError("Configured Azure subscriptions could not be loaded.");
+    });
+    return () => { active = false; };
   }, []);
 
-  useEffect(() => {
+  async function generate(event) {
+    event.preventDefault();
+    if (!subscription || busy) return;
+    setBusy(true);
     setReport(null);
-  }, [architectureId]);
-
-  async function generateReport() {
-    if (!architectureId) return;
-    setLoading(true);
-    setError("");
-
-    try {
-      const payload = {
-        include_actual_cost: includeActualCost,
-      };
-      if (provider !== "auto") payload.provider = provider;
-
-      const next = await getArchitectureExecutiveReport(architectureId, payload);
-      setReport(next);
-    } catch (e) {
-      setError(e.message || "Failed to generate executive report");
-    } finally {
-      setLoading(false);
+    const result = await Promise.allSettled(REPORTS[type].map((key) => SOURCES[key].load(subscription)));
+    if (!result.some((entry) => entry.status === "rejected" && entry.reason?.name === "AbortError")) {
+      const sources = result.map((entry, index) => {
+        const key = REPORTS[type][index];
+        const projection = SOURCES[key];
+        const origin = { source: key, label: projection.label };
+        if (entry.status === "rejected") return { ...origin, status: "unavailable" };
+        const data = entry.value;
+        const rows = projection.rows(data);
+        const count = projection.count(data);
+        return {
+          ...origin,
+          status: data.status || "loaded",
+          last_attempt_at: data.last_attempt_at || null,
+          last_complete_at: data.last_success_at || null,
+          count,
+          truncated: Boolean(data.has_next) || rows.length < count,
+          ...(key === "security" && { risk_score: data.score ?? null }),
+          rows,
+        };
+      });
+      setReport({ type, subscription_id: subscription, generated_at: new Date().toISOString(), sources });
     }
+    setBusy(false);
   }
 
-  function exportReport() {
-    if (!report) return;
-    const safeName = (report.architecture?.name || "architecture").toLowerCase().replace(/\s+/g, "-");
-    downloadJson(`monitorai-v215-report-${safeName}.json`, report);
-  }
-
-  return (
-    <section className="workspace-panel">
-      <div className="workspace-header">
-        <div>
-          <div className="workspace-eyebrow">Reports</div>
-          <h1>Executive Reports</h1>
-          <p>Generate a cross-domain architecture report from live platform signals and intelligence output.</p>
-        </div>
-      </div>
-
-      {error && <div className="error">{error}</div>}
-
-      <section className="card workspace-stack">
-        <div className="toolbar-row">
-          <select value={architectureId} onChange={(e) => setArchitectureId(e.target.value)}>
-            {architectures.length === 0 ? (
-              <option value="">No architectures</option>
-            ) : (
-              architectures.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))
-            )}
-          </select>
-          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
-            <option value="auto">Auto provider selection</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-            <option value="deterministic_fallback">Deterministic fallback</option>
-          </select>
-          <label>
-            <input
-              type="checkbox"
-              checked={includeActualCost}
-              onChange={(e) => setIncludeActualCost(e.target.checked)}
-            />
-            Include actual billed cost
-          </label>
-          <button onClick={generateReport} disabled={!architectureId || loading}>
-            {loading ? "Generating..." : "Generate Report"}
-          </button>
-          <button onClick={exportReport} disabled={!report}>Export JSON</button>
-        </div>
-
-        {!report ? (
-          <div className="empty">Generate a report to view architecture-level executive insights.</div>
-        ) : (
-          <>
-            <div className="platform-grid">
-              <article className="platform-card">
-                <h3>Findings</h3>
-                <div className="platform-value" style={{ fontSize: 24 }}>{report.highlights.findings_count}</div>
-                <p>AI findings from architecture, monitoring, security, and cost context.</p>
-              </article>
-              <article className="platform-card">
-                <h3>Incidents</h3>
-                <div className="platform-value" style={{ fontSize: 24 }}>{report.highlights.incidents_count}</div>
-                <p>Generated from monitoring signals through the legacy incident engine.</p>
-              </article>
-              <article className="platform-card">
-                <h3>Monthly Estimated Cost</h3>
-                <div className="platform-value" style={{ fontSize: 24 }}>${report.highlights.monthly_estimated_cost}</div>
-                <p>Pricing source: {report.cost_estimate.pricing_source}</p>
-              </article>
-            </div>
-
-            <section className="card">
-              <div className="status-list">
-                <div><strong>Generated:</strong> {report.generated_at}</div>
-                <div><strong>Architecture:</strong> {report.architecture.name}</div>
-                <div><strong>Monitoring state:</strong> {report.monitoring.state}</div>
-                <div><strong>Security risk:</strong> {report.highlights.security_risk_level}</div>
-                <div><strong>Intelligence provider used:</strong> {report.highlights.provider_used}</div>
-                <div><strong>Actual cost availability:</strong> {report.highlights.actual_cost_available ? "available" : "unavailable"}</div>
-              </div>
-              {report.notes?.length ? (
-                <div className="status-list" style={{ marginTop: 12 }}>
-                  {report.notes.map((note, idx) => (
-                    <div key={`${idx}-${note}`}><strong>Note:</strong> {note}</div>
-                  ))}
-                </div>
-              ) : null}
-            </section>
-
-            <section className="card">
-              <div className="card-title"><h2>Intelligence Recommendations</h2></div>
-              {report.intelligence.recommendations.length === 0 ? (
-                <div className="empty">No recommendations generated for current context.</div>
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <th>Severity</th>
-                      <th>Category</th>
-                      <th>Recommendation</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.intelligence.recommendations.map((item, idx) => (
-                      <tr key={`${item.id}-${idx}`}>
-                        <td>{item.title}</td>
-                        <td>{item.severity}</td>
-                        <td>{item.category}</td>
-                        <td>{item.recommendation}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-
-            <section className="card">
-              <div className="card-title"><h2>Incident Signals</h2></div>
-              {report.incidents.incident_count === 0 ? (
-                <div className="empty">No incidents generated from current monitoring signals.</div>
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <th>Severity</th>
-                      <th>Status</th>
-                      <th>Resource</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.incidents.incidents.map((item) => (
-                      <tr key={item.incident_id}>
-                        <td>{item.title}</td>
-                        <td>{item.severity}</td>
-                        <td>{item.status}</td>
-                        <td>{item.resource_name || "n/a"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-          </>
-        )}
-      </section>
+  return <section className="workspace-panel azure-observability">
+    <header className="workspace-header"><div><h1>Reports</h1></div></header>
+    <section className="card account-form">
+      <h2>Subscription evidence report</h2>
+      <p>Reports summarize saved evidence and the first 20 detail records from each source. Source status and collection time indicate coverage.</p>
+      {error && <p role="alert" className="error">{error}</p>}
+      {!subscriptions && !error && <p role="status">Loading subscriptions…</p>}
+      {subscriptions?.length === 0 && <p>Configure an Azure subscription to generate reports.</p>}
+      {Boolean(subscriptions?.length) && <form className="account-form" onSubmit={generate}>
+        <fieldset disabled={busy}>
+          <label>Subscription<select value={subscription} onChange={(event) => {
+            setReport(null);
+            setSubscription(event.target.value);
+          }}>{subscriptions.map((id) => <option key={id}>{id}</option>)}</select></label>
+          <label>Report type<select value={type} onChange={(event) => {
+            setReport(null);
+            setType(event.target.value);
+          }}>{Object.keys(REPORTS).map((key) => <option key={key} value={key}>{displayLabel(key)}</option>)}</select></label>
+          <button type="submit">Generate report</button>
+        </fieldset>
+      </form>}
+      {busy && <p role="status">Reading report evidence…</p>}
+      {report && <>
+        <h3>{displayLabel(report.type)} report</h3>
+        <p>Generated {snapshotTime(report.generated_at)}</p>
+        <ul className="design-list">{report.sources.map((source) => <li key={source.source}>
+          <strong>{source.label}</strong>
+          <span>{displayLabel(source.status)}{source.count != null && ` · ${source.count} records read`}</span>
+          {source.last_complete_at && <span>Last complete collection {snapshotTime(source.last_complete_at)}</span>}
+          {source.last_attempt_at && <span>Last collection attempt {snapshotTime(source.last_attempt_at)}</span>}
+          {source.risk_score != null && <span>Saved risk score {source.risk_score}</span>}
+          {source.truncated && <span>Detail records are limited in this report.</span>}
+        </li>)}</ul>
+        <div><button type="button" onClick={() => downloadJson(`monitorai-${report.type}-report.json`, report)}>
+          Download JSON
+        </button></div>
+      </>}
     </section>
-  );
+  </section>;
 }

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -50,4 +50,17 @@ class FindingEvent(Base):
     actor_id: Mapped[UUID]
     status: Mapped[str] = mapped_column(String(24))
     note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FindingRiskAcceptance(Base):
+    __tablename__ = "security_finding_risk_acceptances"
+    __table_args__ = (Index("ix_finding_risk_acceptance_history", "finding_id", "created_at"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    finding_id: Mapped[UUID] = mapped_column(ForeignKey("security_assessment_findings.id", ondelete="CASCADE"))
+    actor_id: Mapped[UUID]
+    actor_username: Mapped[str] = mapped_column(String(64))
+    rationale: Mapped[str] = mapped_column(Text)
+    expires_on: Mapped[date]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

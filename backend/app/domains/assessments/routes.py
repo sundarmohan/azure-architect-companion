@@ -1,17 +1,17 @@
 """Client-scoped records for authorized human-led security work."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlalchemy import case, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.access.routes import audit, client_access, get_db
-from .models import Assessment, AssessmentFinding, FindingEvent
+from app.domains.access.routes import audit, client_access, client_admin, get_db
+from .models import Assessment, AssessmentFinding, FindingEvent, FindingRiskAcceptance
 
 router = APIRouter()
 Severity = Literal["critical", "high", "medium", "low", "informational"]
@@ -82,11 +82,32 @@ class EventRead(BaseModel):
     created_at: AwareDatetime
 
 
+class RiskAcceptanceWrite(RecordInput):
+    rationale: str = Field(min_length=1, max_length=2000)
+    expires_on: date
+    previous_id: UUID | None = None
+
+
+class RiskAcceptanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    rationale: str
+    expires_on: date
+    actor_username: str
+    created_at: AwareDatetime
+
+    @computed_field
+    @property
+    def active(self) -> bool:
+        return self.expires_on > datetime.now(timezone.utc).date()
+
+
 class FindingRead(FindingImport, TrackingWrite):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     created_at: AwareDatetime
     history: list[EventRead] = Field(default_factory=list)
+    risk_acceptance: RiskAcceptanceRead | None = None
 
 
 class AssessmentDetail(AssessmentRead):
@@ -117,6 +138,11 @@ async def scoped_assessment(db, client_id, assessment_id):
     if not item:
         raise HTTPException(404, "Assessment not found")
     return item
+
+
+def latest_risk_acceptances():
+    decision = FindingRiskAcceptance
+    return select(decision).order_by(decision.finding_id, decision.created_at.desc(), decision.id.desc())
 
 
 @router.get("", response_model=list[AssessmentRead])
@@ -167,13 +193,20 @@ async def assessment_detail(assessment_id: UUID, client_id: UUID = Depends(clien
     findings = (await db.scalars(select(AssessmentFinding).where(AssessmentFinding.assessment_id == item.id)
                                  .order_by(AssessmentFinding.created_at.desc(), AssessmentFinding.id))).all()
     history = {}
+    risk_acceptances = {}
     if findings:
         for event in await db.scalars(select(FindingEvent).join(AssessmentFinding).where(
             AssessmentFinding.assessment_id == item.id
         ).order_by(FindingEvent.created_at, FindingEvent.id)):
             history.setdefault(event.finding_id, []).append(EventRead.model_validate(event))
+        latest = (latest_risk_acceptances().join(AssessmentFinding)
+                  .where(AssessmentFinding.assessment_id == item.id).distinct(FindingRiskAcceptance.finding_id))
+        for decision in await db.scalars(latest):
+            risk_acceptances[decision.finding_id] = RiskAcceptanceRead.model_validate(decision)
     return AssessmentDetail(**AssessmentRead.model_validate(item).model_dump(), findings=[
-        FindingRead.model_validate(finding).model_copy(update={"history": history.get(finding.id, [])})
+        FindingRead.model_validate(finding).model_copy(update={
+            "history": history.get(finding.id, []), "risk_acceptance": risk_acceptances.get(finding.id),
+        })
         for finding in findings
     ])
 
@@ -193,6 +226,36 @@ async def import_findings(assessment_id: UUID, payload: ImportBatch, request: Re
     audit(db, "import_security_findings", request.state.account, client_id, str(assessment_id))
     await db.commit()
     return {"inserted": inserted, "duplicates": len(values) - inserted}
+
+
+@router.put("/{assessment_id}/findings/{finding_id}/risk-acceptance", response_model=RiskAcceptanceRead)
+async def record_risk_acceptance(assessment_id: UUID, finding_id: UUID, payload: RiskAcceptanceWrite,
+                                 request: Request, client_id: UUID = Depends(client_admin),
+                                 db: AsyncSession = Depends(get_db)):
+    await scoped_assessment(db, client_id, assessment_id)
+    finding = await db.scalar(select(AssessmentFinding).where(
+        AssessmentFinding.assessment_id == assessment_id, AssessmentFinding.id == finding_id
+    ).with_for_update())
+    if finding is None:
+        raise HTTPException(404, "Finding not found")
+    actor = request.state.account
+    previous = await db.scalar(latest_risk_acceptances().where(FindingRiskAcceptance.finding_id == finding_id).limit(1))
+    if (previous and previous.actor_id == actor.id and previous.rationale == payload.rationale
+            and previous.expires_on == payload.expires_on):
+        return previous
+    if payload.previous_id != (previous.id if previous else None):
+        raise HTTPException(409, "Risk acceptance changed. Reload the assessment before recording a decision.")
+    if payload.expires_on <= datetime.now(timezone.utc).date():
+        raise HTTPException(422, "The UTC expiry date must be in the future")
+    if finding.status == "closed":
+        raise HTTPException(409, "Risk acceptance can only be recorded for an open finding")
+    decision = FindingRiskAcceptance(finding_id=finding_id, actor_id=actor.id, actor_username=actor.username,
+                                     rationale=payload.rationale, expires_on=payload.expires_on)
+    db.add(decision)
+    await db.flush()
+    audit(db, "record_vulnerability_risk_acceptance", actor, client_id, str(decision.id))
+    await db.commit()
+    return decision
 
 
 @router.put("/{assessment_id}/findings/{finding_id}", response_model=FindingRead)
@@ -218,5 +281,9 @@ async def track_finding(assessment_id: UUID, finding_id: UUID, payload: Tracking
     for key, value in updates.items():
         setattr(item, key, value or None if key in {"owner", "retest_note"} else value)
     audit(db, "track_security_assessment_finding", request.state.account, client_id, str(finding_id))
+    decision = await db.scalar(latest_risk_acceptances().where(FindingRiskAcceptance.finding_id == finding_id).limit(1))
+    result = FindingRead.model_validate(item).model_copy(update={
+        "risk_acceptance": RiskAcceptanceRead.model_validate(decision) if decision else None,
+    })
     await db.commit()
-    return item
+    return result
