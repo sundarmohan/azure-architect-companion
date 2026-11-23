@@ -8,6 +8,7 @@ import {
   getAzureHealthIncidents,
   getAzureInventory,
   getAzureMonitoring,
+  getAzureMetricThreshold,
   getAzureMonitoringSchedule,
   queryAzureDiagnostics,
   refreshAzureMonitoring,
@@ -22,6 +23,7 @@ vi.mock("../services/api", () => ({
   getAzureHealthIncidents: vi.fn(),
   getAzureInventory: vi.fn(),
   getAzureMonitoring: vi.fn(),
+  getAzureMetricThreshold: vi.fn(),
   refreshAzureMonitoring: vi.fn(),
   getAzureMonitoringSchedule: vi.fn(),
   queryAzureDiagnostics: vi.fn(),
@@ -52,6 +54,10 @@ function snapshot(name, extra = {}) {
 beforeEach(() => {
   vi.resetAllMocks();
   getAzureConnectionStatus.mockResolvedValue({ configured_subscription_id: SUBSCRIPTIONS[0], configured_subscription_ids: SUBSCRIPTIONS });
+  getAzureMetricThreshold.mockResolvedValue({
+    threshold: null, assessment: null, choices: [], snapshot_status: "not_synced",
+    last_attempt_at: null, last_success_at: null,
+  });
 });
 
 describe("Azure monitoring workspace", () => {

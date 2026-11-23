@@ -20,6 +20,7 @@ from app.domains.architecture.azure_routes import router as azure_router
 from app.domains.architecture.models import Architecture
 from app.domains.architecture.routes import router as architecture_router
 from app.domains.monitoring.diagnostics import router as diagnostics_router
+from app.domains.monitoring.metric_thresholds import router as metric_threshold_router
 from app.domains.monitoring.observation_routes import router as observation_router
 from app.domains.monitoring.security_routes import router as security_router
 
@@ -82,6 +83,7 @@ api_router.include_router(compliance_router, prefix="/compliance", tags=["compli
 api_router.include_router(devsecops_router, prefix="/devsecops", tags=["devsecops"])
 api_router.include_router(devsecops_findings_router, prefix="/devsecops", tags=["devsecops"])
 api_router.include_router(observation_router, prefix="/azure", tags=["azure-observations"])
+api_router.include_router(metric_threshold_router, prefix="/azure", tags=["azure-monitoring-thresholds"])
 api_router.include_router(diagnostics_router, prefix="/azure/diagnostics", tags=["azure-diagnostics"])
 api_router.include_router(security_router, prefix="/azure/security", tags=["azure-security"])
 api_router.include_router(assessment_router, prefix="/assessments", tags=["security-assessments"])

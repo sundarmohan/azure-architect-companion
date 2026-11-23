@@ -168,6 +168,10 @@ export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQ
 export const refreshAzureInventory=id=>request(`/azure/inventory/refresh${subscriptionQuery(id)}`,{method:"POST"});
 export const getAzureMonitoring=id=>fetchRequest(`/azure/monitoring${subscriptionQuery(id)}`);
 export const refreshAzureMonitoring=id=>request(`/azure/monitoring/refresh${subscriptionQuery(id)}`,{method:"POST"});
+export const getAzureMetricThreshold=id=>fetchRequest(`/azure/monitoring/thresholds${subscriptionQuery(id)}`);
+export const saveAzureMetricThreshold=(id,data)=>request(`/azure/monitoring/thresholds${subscriptionQuery(id)}`,{
+ method:"PUT",body:JSON.stringify(data),
+});
 export const queryAzureDiagnostics=(id,data)=>fetchRequest(`/azure/diagnostics/query${subscriptionQuery(id)}`,{
  method:"POST",body:JSON.stringify(data),
 });

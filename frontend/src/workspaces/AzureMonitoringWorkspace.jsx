@@ -10,6 +10,7 @@ import {
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 import AzureDiagnostics from "./AzureDiagnostics";
 import AzureHealthIncidents from "./AzureHealthIncidents";
+import AzureMetricThreshold from "./AzureMetricThreshold";
 
 const NUMBER_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
 
@@ -250,6 +251,7 @@ export default function AzureMonitoringWorkspace({ canRefresh, canManageSchedule
     canRefresh={canRefresh} loadSnapshot={getAzureMonitoring} refreshSnapshot={refreshAzureMonitoring}>
     {(snapshot, subscription, setSnapshot) => <>
       {canManageSchedule && <MonitoringSchedule subscription={subscription} />}
+      <AzureMetricThreshold subscription={subscription} canManage={canManageSchedule} />
       {snapshot && <MonitoringResources snapshot={snapshot} subscription={subscription} canAcknowledge={canRefresh}
         onAcknowledge={(saved) => setSnapshot((current) => current && ({
           ...current,

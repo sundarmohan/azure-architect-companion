@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
@@ -31,7 +32,12 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         if not context.inventory_exists:
             return {kind: ("inventory_required", {}, []) for kind in kinds}
         assert str(context.subscription_id) == primary and context.resources == [resource]
-        payload = {"monitoring": {"resources": [{**resource, "health": "degraded", "health_status": "synced", "metrics": []}]},
+        payload = {"monitoring": {"resources": [{**resource, "health": "degraded", "health_status": "synced",
+                                                   "metrics": [{"name": "Percentage CPU", "aggregation": "average",
+                                                                "unit": "Percent", "points": [{
+                                                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                                                    "value": 82.5,
+                                                                }]}]}]},
                    "network": {"resources": [], "links": []},
                    "security": {"findings": [{"id": "a" * 64, "code": "storage", "title": security_title,
                                                "severity": "high", "evidence": ["Recorded Azure setting"],
@@ -59,6 +65,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         schedule = monitor + "/schedule"
         network = "/api/azure/network"
         security = "/api/azure/security"
+        thresholds = monitor + "/thresholds"
         tracking = f"{security}/findings/{'a' * 64}/tracking"
         assert client.post(monitor + "/refresh", headers=first_headers).json()["status"] == "inventory_required"
         sync = client.post("/api/azure/inventory/refresh", headers=first_headers)
@@ -69,6 +76,20 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
             assert refreshed.json()["status"] == "synced"
             assert client.get(path, headers=second_headers).json()["status"] == "not_synced"
             assert client.get(path, headers=first_headers, params={"subscription_id": secondary}).json()["status"] == "not_synced"
+
+        threshold = {"resource_id": resource["id"], "metric": "Percentage CPU", "aggregation": "average",
+                     "direction": "above", "limit": 80}
+        empty_threshold = client.get(thresholds, headers=second_headers)
+        assert empty_threshold.status_code == 200 and empty_threshold.json()["threshold"] is None
+        assert client.put(thresholds, headers=second_headers, json=threshold).status_code == 409
+        saved_threshold = client.put(thresholds, headers=first_headers, json=threshold)
+        assert saved_threshold.status_code == 200, saved_threshold.text
+        assert saved_threshold.json()["assessment"]["status"] == "breached"
+        assert saved_threshold.json()["assessment"]["value"] == 82.5
+        assert saved_threshold.json()["threshold"]["unit"] == "Percent"
+        assert client.get(thresholds, headers=first_headers).json()["threshold"]["limit"] == 80
+        invalid_threshold = {**threshold, "metric": "Unsupported"}
+        assert client.put(thresholds, headers=first_headers, json=invalid_threshold).status_code == 409
 
         initial = client.get(monitor, headers=first_headers).json()["resources"][0]["health_alert"]
         assert initial["acknowledged_at"] is None
@@ -161,6 +182,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert sum(event["action"] == "create_azure_health_incident_action" for event in events) == 1
         assert sum(event["action"] == "update_azure_health_incident_action" for event in events) == 1
         assert sum(event["action"] == "link_azure_incident_security_evidence" for event in events) == 1
+        assert sum(event["action"] == "save_azure_metric_threshold" for event in events) == 1
         assert client.get(incidents, headers=first_headers).json()["incidents"] == [updated.json()]
 
         details = {"status": "in_progress", "owner": "Cloud operations", "due_date": "2026-12-31"}
@@ -202,6 +224,8 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.get(evidence_path, headers=first_headers).json() == [evidence]
         assert client.put(link_path, headers=first_headers, json=version).status_code == 403
         assert client.put(schedule, headers=first_headers, json={"enabled": False, "interval_minutes": 5}).status_code == 403
+        assert client.get(thresholds, headers=first_headers).json()["threshold"]["limit"] == 80
+        assert client.put(thresholds, headers=first_headers, json=threshold).status_code == 403
         client.cookies.clear()
         client.cookies.set("monitorai_session", admin)
 
