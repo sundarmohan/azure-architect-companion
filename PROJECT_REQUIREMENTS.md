@@ -308,4 +308,71 @@ Future deployments will be manually triggered by you through GitHub.
 11. Follow the no-local-testing policy and use GitHub Actions for verification.
 12. Preserve the existing repository and EC2 deployment arrangement.
 
+15. Product alignment and stabilization addendum
+
+This addendum records the stabilization review approved on 23 November 2026.
+It takes priority over adding more modules until the existing product workflows
+are reliable and understandable.
+
+Primary operator roles:
+- The IT Manager must be able to identify unavailable services, stale evidence,
+  operational risk, assigned work, overdue work and the next supported action.
+- The Compliance Officer must be able to identify control coverage, evidence
+  source and freshness, review status, corrective actions and validation limits.
+- A user must not need to understand MonitorAI's internal module boundaries to
+  follow a resource, finding, incident or corrective action.
+
+Capability visibility and proactive support requirements:
+- Show the current client, Azure subscription, application build and evidence
+  collection state wherever they affect a result.
+- Distinguish saved credentials from a successfully authenticated Azure
+  connection.
+- When a prerequisite fails, show the failed stage, a safe reason category,
+  evidence timestamp, retained-data status and a supported next action.
+- Proactive priorities must be derived only from stored evidence such as failed
+  collections, unavailable resources, threshold breaches, overdue findings,
+  open incidents, compliance actions and recovery gaps.
+- Every priority must show its evidence source, freshness, impact, owner and due
+  state, with a direct path to the underlying record.
+- Missing, stale, partial or permission-denied evidence must remain visible and
+  must never be interpreted as a healthy result.
+- Do not fabricate Azure responses, metrics, topology, connectivity, risk or
+  recommendations.
+
+Approved stabilization sequence:
+
+0. Evidence safety and build provenance
+   - Keep raw HAR captures and their authentication/session data out of Git.
+   - Expose application version, source revision and build time using explicit
+     build metadata. Unknown metadata must be reported as unknown.
+   - Return a safe correlation identifier for unexpected server errors and log
+     no credentials, cookies, request bodies or provider tokens.
+
+1. Azure connection and inventory reliability
+   - Classify configuration, authentication, permission, throttling, timeout,
+     provider-response, concurrency and persistence failures.
+   - Persist the last test attempt, last successful verification and safe reason
+     category for each client-scoped Azure connection.
+   - Persist inventory collection stage and failure category without replacing
+     the last complete inventory after a failed refresh.
+   - Test the active production routes with mocked Azure responses through
+     GitHub Actions. Legacy reference routes do not establish release readiness.
+   - Preserve client isolation, encrypted credentials, RBAC and audit records.
+
+2. Azure-aware Architecture Designer relationships — pending review after
+   stabilization phases 0 and 1.
+3. Inventory-backed Network Intelligence — pending review.
+4. Monitoring history, thresholds, anomalies and recommendations — pending
+   review.
+5. Unified security finding, assessment and incident workflow — pending review.
+6. Task-oriented navigation and proactive priority experience — pending review.
+
+Stabilization verification rules:
+- Work only on `consolidation/v2.2-baseline`.
+- Use mocked Azure responses in CI and perform no live Azure mutation.
+- Validate migrations, backend tests, frontend tests and the production frontend
+  build through GitHub Actions.
+- Do not publish Docker images or deploy to EC2 during stabilization development.
+- Browser validation follows successful CI and an explicitly approved deployment.
+
 Final product objective: MonitorAI should become one platform through which you can manage a portfolio of clients' Azure infrastructure, monitor operational health, identify security weaknesses, conduct authorized security assessments, measure compliance, investigate incidents and produce management reports—all with evidence, accountability and human control.

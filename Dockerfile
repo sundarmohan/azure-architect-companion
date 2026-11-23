@@ -16,10 +16,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG MONITORAI_BUILD_SHA=""
+ARG MONITORAI_BUILD_TIME=""
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    MONITORAI_BUILD_SHA=${MONITORAI_BUILD_SHA} \
+    MONITORAI_BUILD_TIME=${MONITORAI_BUILD_TIME}
+
+LABEL org.opencontainers.image.title="MonitorAI V2.2" \
+      org.opencontainers.image.version="2.2" \
+      org.opencontainers.image.revision=${MONITORAI_BUILD_SHA} \
+      org.opencontainers.image.created=${MONITORAI_BUILD_TIME}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \

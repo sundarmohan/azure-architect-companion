@@ -62,12 +62,32 @@ def test_phase_one_access(monkeypatch):
         payload["client_secret"] = "test-azure-secret"
         saved = client.put(AZURE + "/credentials", headers=first, json=payload)
         assert saved.status_code == 200, saved.text
+        assert saved.json()["connection_state"] == "unverified"
+        assert saved.json()["last_tested_at"] is None
         assert payload["client_secret"] not in saved.text
         invalid = client.put(AZURE + "/credentials", headers=first,
                              json={**payload, "tenant_id": payload["client_secret"]})
         assert invalid.status_code == 422 and payload["client_secret"] not in invalid.text
         check = client.post(AZURE + "/test", headers=first)
         assert check.json()["connection_state"] == "configured"
+        assert check.json()["last_tested_at"]
+        assert check.json()["last_successful_test_at"]
+        successful_at = check.json()["last_successful_test_at"]
+
+        async def denied_azure_check(_values):
+            return httpx.Response(403)
+
+        monkeypatch.setattr(azure, "check_subscription", denied_azure_check)
+        denied_check = client.post(AZURE + "/test", headers=first)
+        assert denied_check.status_code == 200
+        assert denied_check.json()["connection_state"] == "permission_failure"
+        assert denied_check.json()["failure_stage"] == "subscription_read"
+        assert denied_check.json()["failure_reason"] == "insufficient_permission"
+        assert denied_check.json()["last_successful_test_at"] == successful_at
+        assert denied_check.json()["correlation_id"]
+        persisted = client.get(AZURE + "/status", headers=first).json()
+        assert persisted["connection_state"] == "permission_failure"
+        assert persisted["failure_reason"] == "insufficient_permission"
         assert client.get(AZURE + "/status", headers=second).json()["enabled"] is False
         assert client.get(ARCH, headers=second).json() == []
         assert client.delete(resource_path, headers=second).status_code == 404

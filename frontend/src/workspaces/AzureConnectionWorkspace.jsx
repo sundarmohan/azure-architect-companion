@@ -2,12 +2,27 @@ import { useEffect, useState } from "react";
 import { clearAzureCredentials, getAzureConnectionStatus, saveAzureCredentials, testAzureIntegration } from "../services/api";
 
 const CONNECTION_STATE = {
-  configured: "Credentials are saved.",
+  configured: "Azure verified the configured subscription.",
   not_configured: "No credentials are saved.",
+  unverified: "Credentials are saved but have not been verified with Azure.",
+  configuration_error: "The saved Azure configuration could not be used.",
   authentication_failure: "Azure authentication failed.",
   permission_failure: "The service principal cannot read this subscription.",
   provider_error: "The Azure subscription could not be read.",
 };
+
+const NEXT_ACTION = {
+  credential_rejected: "Confirm the tenant, application ID and client secret, then test again.",
+  insufficient_permission: "Grant the service principal Reader access to the subscription, then test again.",
+  throttled: "Azure throttled the request. Wait before testing again.",
+  timeout: "Azure did not respond in time. Check outbound connectivity and retry.",
+  network_error: "Check outbound access to management.azure.com and retry.",
+  invalid_response: "Retry the test. If it repeats, give support the reference below.",
+};
+
+function formatTime(timestamp) {
+  return timestamp ? new Date(timestamp).toLocaleString() : "Never";
+}
 
 export default function AzureConnectionWorkspace({ canManage }) {
   const [status, setStatus] = useState(null);
@@ -62,6 +77,12 @@ export default function AzureConnectionWorkspace({ canManage }) {
       <p role="status">{tested && status?.connection_state === "configured"
         ? "Connection passed. Azure returned the subscription."
         : status?.message || CONNECTION_STATE[status?.connection_state] || (!error && "Loading…")}</p>
+      {status?.failure_reason && <div className="error" role="alert">
+        <p>Failed stage: {status.failure_stage || "Azure request"}. Reason: {status.failure_reason}.</p>
+        <p>{NEXT_ACTION[status.failure_reason] || "Retry the test. If it repeats, use the support reference."}</p>
+        {status.correlation_id && <p>Support reference: <code>{status.correlation_id}</code></p>}
+      </div>}
+      {status?.enabled && <p>Last test {formatTime(status.last_tested_at)} · Last successful verification {formatTime(status.last_successful_test_at)}</p>}
       {subscriptions.length > 0 && <p>Configured subscriptions {subscriptions.join(", ")}</p>}
       {canManage && subscriptions.length > 1 && <label>Subscription to test<select value={testSubscription || subscriptions[0]} disabled={busy}
         onChange={(event) => {

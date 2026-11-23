@@ -4,14 +4,13 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import httpx
-from azure.core.exceptions import AzureError
 from azure.identity.aio import ClientSecretCredential
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.architecture.azure_discovery import AzureResourceDiscoveryAdapter
-from .azure import confirm_active_connection, connection_values, select_subscription
+from .azure import azure_failure, confirm_active_connection, connection_values, request_correlation_id, select_subscription
 from .models import AuditEvent, AzureConnection, AzureInventorySnapshot
 from .routes import client_access, get_db
 
@@ -34,18 +33,24 @@ class InventoryRead(BaseModel):
     subscription_id: UUID | None
     status: str
     failure_reason: str | None = None
+    failure_stage: str | None = None
+    correlation_id: str | None = None
+    showing_retained_data: bool = False
     last_attempt_at: datetime | None = None
     last_success_at: datetime | None = None
     resources: list[Resource] = Field(default_factory=list)
     resource_groups: list[ResourceGroup] = Field(default_factory=list)
 
 
-def inventory_read(snapshot, subscription_id):
+def inventory_read(snapshot, subscription_id, request=None):
     if not snapshot:
         status = "not_synced" if subscription_id else "not_configured"
-        return InventoryRead(subscription_id=subscription_id, status=status)
+        return InventoryRead(subscription_id=subscription_id, status=status,
+                             correlation_id=request_correlation_id(request))
     return InventoryRead(
         subscription_id=subscription_id, status=snapshot.status, failure_reason=snapshot.failure_reason,
+        failure_stage=snapshot.failure_stage, correlation_id=request_correlation_id(request),
+        showing_retained_data=bool(snapshot.last_success_at and snapshot.status != "synced"),
         last_attempt_at=snapshot.last_attempt_at,
         last_success_at=snapshot.last_success_at, resources=snapshot.resources, resource_groups=snapshot.resource_groups,
     )
@@ -67,11 +72,13 @@ def summarize_items(items, subscription_id, *, resources):
     return [indexed[key] for key in sorted(indexed)]
 
 
-def failure_state(result):
-    return {
+def failure_details(result):
+    state = {
         "authentication_failure": "authentication_failure",
         "permission_failure": "permission_failure",
     }.get(result.get("connection_state"), "provider_error")
+    reason = result.get("failure_reason") or state
+    return state, reason
 
 
 @dataclass
@@ -80,28 +87,36 @@ class InventoryCollection:
     failure_reason: str | None = None
     groups: list[dict] = field(default_factory=list)
     resources: list[dict] = field(default_factory=list)
+    failure_stage: str | None = None
 
 
 async def collect_inventory(values, subscription_id):
     adapter = AzureResourceDiscoveryAdapter()
     base = f"{ARM}/subscriptions/{subscription_id}"
-    async with ClientSecretCredential(
-        tenant_id=values["tenant_id"], client_id=values["client_id"], client_secret=values["client_secret"]
-    ) as credential:
-        token = await credential.get_token(f"{ARM}/.default")
+    try:
+        async with ClientSecretCredential(
+            tenant_id=values["tenant_id"], client_id=values["client_id"], client_secret=values["client_secret"]
+        ) as credential:
+            token = await credential.get_token(f"{ARM}/.default")
+    except Exception as error:
+        state, stage, reason = azure_failure(error, "token_acquisition")
+        return InventoryCollection(status=state, failure_reason=reason, failure_stage=stage)
     async with httpx.AsyncClient(timeout=10) as http:
         headers = {"Authorization": f"Bearer {token.token}"}
         groups = await adapter._collect_paged(
             client=http, url=f"{base}/resourcegroups", api_version=adapter.RESOURCE_GROUPS_API_VERSION, headers=headers
         )
         if not groups["success"]:
-            cause = failure_state(groups)
-            return InventoryCollection(cause, cause)
+            state, reason = failure_details(groups)
+            return InventoryCollection(status=state, failure_reason=reason, failure_stage="resource_groups")
         resources = await adapter._collect_paged(
             client=http, url=f"{base}/resources", api_version=adapter.RESOURCES_API_VERSION, headers=headers
         )
         if not resources["success"]:
-            return InventoryCollection("partial_failure", failure_state(resources))
+            _state, reason = failure_details(resources)
+            return InventoryCollection(
+                status="partial_failure", failure_reason=reason, failure_stage="resources",
+            )
     return InventoryCollection(
         "synced",
         groups=summarize_items(groups["items"], subscription_id, resources=False),
@@ -110,11 +125,11 @@ async def collect_inventory(values, subscription_id):
 
 
 @router.get("/inventory", response_model=InventoryRead)
-async def read_inventory(subscription_id: UUID | None = None, client_id: UUID = Depends(client_access),
-                         db: AsyncSession = Depends(get_db)):
+async def read_inventory(request: Request, subscription_id: UUID | None = None,
+                         client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
     selected = select_subscription(await connection_values(db, client_id), subscription_id)
     snapshot = await db.get(AzureInventorySnapshot, (client_id, UUID(selected))) if selected else None
-    return inventory_read(snapshot, selected)
+    return inventory_read(snapshot, selected, request)
 
 
 @router.post("/inventory/refresh", response_model=InventoryRead)
@@ -124,7 +139,7 @@ async def refresh_inventory(request: Request, subscription_id: UUID | None = Non
     values = await connection_values(db, client_id, connection) if connection else None
     selected = select_subscription(values, subscription_id)
     if not selected:
-        return inventory_read(None, None)
+        return inventory_read(None, None, request)
     ciphertext = connection.ciphertext
     # Return the connection to the pool during the external request.
     await db.rollback()
@@ -132,15 +147,14 @@ async def refresh_inventory(request: Request, subscription_id: UUID | None = Non
     try:
         async with asyncio.timeout(45):
             result = await collect_inventory(values, selected)
-    except AzureError:
-        result = InventoryCollection("authentication_failure", "authentication_failure")
-    except (httpx.HTTPError, ValueError, TimeoutError):
-        result = InventoryCollection("provider_error", "provider_error")
+    except Exception as error:
+        state, stage, reason = azure_failure(error, "inventory_collection")
+        result = InventoryCollection(status=state, failure_reason=reason, failure_stage=stage)
 
     account = await confirm_active_connection(db, request, client_id, ciphertext)
     snapshot = await db.get(AzureInventorySnapshot, (client_id, UUID(selected)))
     if snapshot and snapshot.last_attempt_at > started:
-        return inventory_read(snapshot, selected)
+        return inventory_read(snapshot, selected, request)
     if snapshot is None:
         snapshot = AzureInventorySnapshot(client_id=client_id, subscription_id=UUID(selected),
                                           resources=[], resource_groups=[])
@@ -148,6 +162,7 @@ async def refresh_inventory(request: Request, subscription_id: UUID | None = Non
     snapshot.last_attempt_at = started
     snapshot.status = result.status
     snapshot.failure_reason = result.failure_reason
+    snapshot.failure_stage = result.failure_stage
     if result.status == "synced":
         snapshot.last_success_at = datetime.now(timezone.utc)
         snapshot.resource_groups = result.groups
@@ -157,4 +172,4 @@ async def refresh_inventory(request: Request, subscription_id: UUID | None = Non
         target=selected, outcome="success" if result.status == "synced" else "failed",
     ))
     await db.commit()
-    return inventory_read(snapshot, selected)
+    return inventory_read(snapshot, selected, request)

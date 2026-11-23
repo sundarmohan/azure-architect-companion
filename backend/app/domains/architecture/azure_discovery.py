@@ -208,6 +208,7 @@ class AzureResourceDiscoveryAdapter:
                 return {
                     "success": False,
                     "connection_state": "azure_api_failure",
+                    "failure_reason": "throttled" if response.status_code == 429 else "provider_error",
                     "error": self._api_error_message(response),
                 }
 
@@ -235,6 +236,7 @@ class AzureResourceDiscoveryAdapter:
         return {
             "success": False,
             "connection_state": "azure_api_failure",
+            "failure_reason": "invalid_response",
             "error": "Azure inventory pagination was invalid or exceeded collection limits",
         }
 

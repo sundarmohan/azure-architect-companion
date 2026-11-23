@@ -59,6 +59,11 @@ class AzureConnection(Base):
 
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
     ciphertext: Mapped[str] = mapped_column(Text)
+    connection_state: Mapped[str] = mapped_column(String(32), default="unverified")
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_stage: Mapped[str | None] = mapped_column(String(32))
+    failure_reason: Mapped[str | None] = mapped_column(String(32))
 
 class AzureInventorySnapshot(Base):
     __tablename__ = "client_azure_inventory"
@@ -67,6 +72,7 @@ class AzureInventorySnapshot(Base):
     subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
     status: Mapped[str] = mapped_column(String(32))
     failure_reason: Mapped[str | None] = mapped_column(String(32))
+    failure_stage: Mapped[str | None] = mapped_column(String(32))
     last_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resource_groups: Mapped[list[dict]] = mapped_column(JSONB, default=list)

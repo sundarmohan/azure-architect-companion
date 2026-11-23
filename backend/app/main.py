@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from alembic import command
 from alembic.config import Config
 from app.api.router import api_router
+from app.build_info import PRODUCT_VERSION, build_metadata
 from app.db.session import engine
 from app.domains.access.routes import bootstrap_admin
 from app.domains.architecture import models  # noqa: F401
@@ -17,7 +18,7 @@ from app.domains.monitoring import models as monitoring_models  # noqa: F401
 from app.domains.monitoring.observation_worker import run_worker, stop_worker
 from app.request_safety import safe_request_boundary
 
-app = FastAPI(title="MonitorAI V2.20 API", version="2.20")
+app = FastAPI(title="MonitorAI V2.2 API", version=PRODUCT_VERSION)
 
 dev_origins = []
 if os.getenv("MONITORAI_INSECURE_LOCAL_COOKIE") == "1":
@@ -78,7 +79,7 @@ async def close_database():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.20"}
+    return {"status": "ok", "version": PRODUCT_VERSION, "build": build_metadata()}
 
 
 # Serve the built SPA (production image copies frontend/dist to /app/static).

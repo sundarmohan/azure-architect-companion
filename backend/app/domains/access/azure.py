@@ -1,11 +1,12 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from uuid import UUID
 
 import httpx
 from azure.identity.aio import ClientSecretCredential
-from azure.core.exceptions import AzureError
+from azure.core.exceptions import AzureError, ClientAuthenticationError, HttpResponseError, ServiceRequestError
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr
@@ -55,17 +56,66 @@ def select_subscription(values, subscription_id):
     return selected
 
 
-def status_for(values=None, state=None, **extra):
+def request_correlation_id(request):
+    return getattr(request.state, "correlation_id", None) if request else None
+
+
+def status_for(values=None, record=None, state=None, request=None, **extra):
+    connection_state = state or (record.connection_state if record else None)
     return ConnectionStatus(
         configured_subscription_ids=subscription_ids(values),
         enabled=bool(values),
         configuration_state="configured" if values else "not_configured",
-        connection_state=state or ("configured" if values else "not_configured"),
+        connection_state=connection_state or ("unverified" if values else "not_configured"),
         configured_tenant_id=values["tenant_id"] if values else None,
         configured_subscription_id=values["subscription_id"] if values else None,
         configured_client_id_hint=values["client_id"][-4:] if values else None,
+        last_tested_at=record.last_tested_at.isoformat() if record and record.last_tested_at else None,
+        last_successful_test_at=record.last_success_at.isoformat() if record and record.last_success_at else None,
+        failure_stage=record.failure_stage if record else None,
+        failure_reason=record.failure_reason if record else None,
+        correlation_id=request_correlation_id(request),
         **extra,
     )
+
+
+def azure_failure(error, stage):
+    """Map provider-boundary exceptions to bounded states without returning exception text."""
+    if isinstance(error, ClientAuthenticationError):
+        return "authentication_failure", stage, "credential_rejected"
+    if isinstance(error, HttpResponseError):
+        status = getattr(error, "status_code", None)
+        if status == 401:
+            return "authentication_failure", stage, "credential_rejected"
+        if status == 403:
+            return "permission_failure", stage, "insufficient_permission"
+        if status == 429:
+            return "provider_error", stage, "throttled"
+        return "provider_error", stage, "azure_http_error"
+    if isinstance(error, (httpx.TimeoutException, TimeoutError)):
+        return "provider_error", stage, "timeout"
+    if isinstance(error, (ServiceRequestError, httpx.HTTPError, OSError)):
+        return "provider_error", stage, "network_error"
+    if isinstance(error, (ValueError, KeyError, TypeError)):
+        configuration_stage = stage in {"credential_setup", "token_acquisition"}
+        return "configuration_error" if configuration_stage else "provider_error", stage, (
+            "invalid_configuration" if configuration_stage else "invalid_response"
+        )
+    if isinstance(error, AzureError):
+        return "provider_error", stage, "azure_sdk_error"
+    return "provider_error", stage, "unexpected_provider_error"
+
+
+def response_failure(status_code, stage):
+    if status_code == 401:
+        return "authentication_failure", stage, "credential_rejected"
+    if status_code == 403:
+        return "permission_failure", stage, "insufficient_permission"
+    if status_code == 429:
+        return "provider_error", stage, "throttled"
+    if isinstance(status_code, int) and 400 <= status_code < 500:
+        return "provider_error", stage, "azure_request_rejected"
+    return "provider_error", stage, "azure_service_error"
 
 
 async def connection_values(db, client_id, record=None):
@@ -83,8 +133,9 @@ async def connection_values(db, client_id, record=None):
 
 
 @router.get("/status", response_model=ConnectionStatus)
-async def read_status(client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
-    return status_for(await connection_values(db, client_id))
+async def read_status(request: Request, client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    record = await db.get(AzureConnection, client_id)
+    return status_for(await connection_values(db, client_id, record) if record else None, record, request=request)
 
 
 @router.put("/credentials", response_model=ConnectionStatus)
@@ -103,14 +154,18 @@ async def save_credentials(payload: Credentials, request: Request, client_id: UU
         item for item in dict.fromkeys(values["additional_subscription_ids"]) if item != values["subscription_id"]
     ]
     encrypted = cipher().encrypt(json.dumps(dict(values, workspace_id=str(client_id))).encode()).decode()
-    await db.execute(insert(AzureConnection).values(client_id=client_id, ciphertext=encrypted)
-        .on_conflict_do_update(index_elements=[AzureConnection.client_id], set_={"ciphertext": encrypted}))
+    connection_changes = {
+        "ciphertext": encrypted, "connection_state": "unverified", "last_tested_at": None,
+        "last_success_at": None, "failure_stage": None, "failure_reason": None,
+    }
+    await db.execute(insert(AzureConnection).values(client_id=client_id, **connection_changes)
+        .on_conflict_do_update(index_elements=[AzureConnection.client_id], set_=connection_changes))
     same_identity = previous and all(previous[key] == values[key] for key in ("tenant_id", "client_id"))
     retained = [UUID(item) for item in subscription_ids(values)] if same_identity else []
     await retire_observations(db, client_id, retained)
     audit(db, "save_azure_connection", request.state.account, client_id)
     await db.commit()
-    return status_for(values)
+    return status_for(values, await db.get(AzureConnection, client_id), request=request)
 
 
 async def retire_observations(db, client_id, retained):
@@ -129,7 +184,7 @@ async def clear_credentials(request: Request, client_id: UUID = Depends(client_a
     await retire_observations(db, client_id, [])
     audit(db, "clear_azure_connection", request.state.account, client_id)
     await db.commit()
-    return status_for()
+    return status_for(request=request)
 
 
 async def confirm_active_connection(db, request, client_id, ciphertext, *, admin=False):
@@ -164,20 +219,28 @@ async def test_connection(request: Request, subscription_id: UUID | None = None,
     values = await connection_values(db, client_id, connection) if connection else None
     selected = select_subscription(values, subscription_id)
     if not selected:
-        return status_for()
+        return status_for(request=request)
     ciphertext = connection.ciphertext
     await db.rollback()
+    tested_at = datetime.now(timezone.utc)
     try:
         async with asyncio.timeout(25):
             response = await check_subscription(dict(values, subscription_id=selected))
-        state = {200: "configured", 401: "authentication_failure", 403: "permission_failure"}.get(
-            response.status_code, "provider_error")
-    except AzureError:
-        state = "authentication_failure"
-    except (httpx.HTTPError, TimeoutError):
-        state = "provider_error"
+        if response.status_code == 200:
+            state, stage, reason = "configured", None, None
+        else:
+            state, stage, reason = response_failure(response.status_code, "subscription_read")
+    except Exception as error:
+        state, stage, reason = azure_failure(error, "subscription_read")
     account = await confirm_active_connection(db, request, client_id, ciphertext, admin=True)
+    current = await db.get(AzureConnection, client_id)
+    current.connection_state = state
+    current.last_tested_at = tested_at
+    current.failure_stage = stage
+    current.failure_reason = reason
+    if state == "configured":
+        current.last_success_at = tested_at
     audit(db, "test_azure_connection", account, client_id, selected,
           outcome="success" if state == "configured" else "failed")
     await db.commit()
-    return status_for(values, state)
+    return status_for(values, current, request=request)

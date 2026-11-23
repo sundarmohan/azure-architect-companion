@@ -11,6 +11,18 @@ const STATUS_TEXT = {
   partial_failure: "Azure returned an incomplete result. Any previous complete snapshot remains visible.",
 };
 
+const FAILURE_ACTION = {
+  credential_rejected: "Review the Azure credentials and test the connection before refreshing again.",
+  insufficient_permission: "Grant Reader access for this subscription and refresh again.",
+  authentication_failure: "Test the Azure connection and update rejected credentials.",
+  permission_failure: "Grant the service principal permission to list the failed inventory scope.",
+  throttled: "Azure throttled collection. Wait before refreshing again.",
+  timeout: "Azure did not respond in time. Check connectivity and retry.",
+  network_error: "Check outbound access to management.azure.com and retry.",
+  invalid_response: "Azure returned an invalid inventory response. Retry and use the support reference if it repeats.",
+  provider_error: "Retry collection. If it repeats, use the support reference.",
+};
+
 const PAGE_SIZE = 25;
 
 function formatTime(timestamp) {
@@ -114,7 +126,12 @@ export default function AzureInventoryWorkspace({ canRefresh }) {
       {canRefresh && <div><button disabled={loading || refreshing} onClick={refresh}>{refreshing ? "Refreshing…" : "Refresh inventory"}</button></div>}
       {inventory && <>
         <p role="status">{STATUS_TEXT[inventory.status] || inventory.status}</p>
-        {inventory.status === "partial_failure" && inventory.failure_reason && <p>{STATUS_TEXT[inventory.failure_reason]}</p>}
+        {inventory.failure_reason && <div className="error" role="alert">
+          <p>Failed stage: {inventory.failure_stage || "inventory collection"}. Reason: {inventory.failure_reason}.</p>
+          <p>{FAILURE_ACTION[inventory.failure_reason] || STATUS_TEXT[inventory.failure_reason] || "Retry collection and use the support reference if it repeats."}</p>
+          {inventory.correlation_id && <p>Support reference: <code>{inventory.correlation_id}</code></p>}
+        </div>}
+        {inventory.showing_retained_data && <p><strong>Previously collected data is shown below.</strong> It is not evidence that the current Azure state is healthy.</p>}
         <p>Last attempt {formatTime(inventory.last_attempt_at)} · Last successful refresh {formatTime(inventory.last_success_at)}</p>
       </>}
     </section>}

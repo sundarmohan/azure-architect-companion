@@ -6,6 +6,8 @@ ConfigurationState = Literal["configured", "not_configured"]
 ConnectionState = Literal[
     "configured",
     "not_configured",
+    "unverified",
+    "configuration_error",
     "authentication_failure",
     "permission_failure",
     "provider_error",
@@ -54,6 +56,10 @@ class AzureIntegrationStatusRead(BaseModel):
     discovered_resource_count: int = 0
     last_discovery_sync_at: str | None = None
     last_tested_at: str | None = None
+    last_successful_test_at: str | None = None
+    failure_stage: str | None = None
+    failure_reason: str | None = None
+    correlation_id: str | None = None
 
 
 class AzureSubscriptionInventoryRead(BaseModel):

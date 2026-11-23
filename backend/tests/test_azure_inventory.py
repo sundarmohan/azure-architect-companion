@@ -68,7 +68,21 @@ def test_inventory_isolated_by_client_and_subscription(monkeypatch):
         result = client.post(f"{path}/refresh", headers=first_headers, params={"subscription_id": secondary}).json()
         assert result["status"] == "partial_failure"
         assert result["failure_reason"] == "permission_failure"
+        assert result["showing_retained_data"] is True
+        assert result["correlation_id"]
         assert result["last_success_at"] and len(result["resources"]) == 1
+
+        async def timed_out_collect(_values, _subscription_id):
+            raise TimeoutError
+
+        monkeypatch.setattr(inventory, "collect_inventory", timed_out_collect)
+        timed_out = client.post(f"{path}/refresh", headers=first_headers, params={"subscription_id": secondary})
+        assert timed_out.status_code == 200
+        assert timed_out.json()["status"] == "provider_error"
+        assert timed_out.json()["failure_stage"] == "inventory_collection"
+        assert timed_out.json()["failure_reason"] == "timeout"
+        assert timed_out.json()["showing_retained_data"] is True
+        assert len(timed_out.json()["resources"]) == 1
         rotated = dict(credentials, client_id=str(uuid4()))
         assert client.put("/api/settings/azure/credentials", headers=first_headers, json=rotated).status_code == 200
         assert client.get(path, headers=first_headers, params={"subscription_id": secondary}).json()["status"] == "not_synced"

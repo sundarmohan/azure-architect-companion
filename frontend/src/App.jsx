@@ -13,7 +13,7 @@ import PlatformDashboard from "./workspaces/PlatformDashboard";
 import ComplianceWorkspace from "./workspaces/ComplianceWorkspace";
 import AssessmentWorkspace from "./workspaces/AssessmentWorkspace";
 import { AccountWorkspace, SignInForm } from "./workspaces/AccountWorkspace";
-import { getCurrentUser, logout, onUnauthorized, setApiSession } from "./services/api";
+import { getBuildInfo, getCurrentUser, logout, onUnauthorized, setApiSession } from "./services/api";
 import "./styles/app.css";
 import "./styles/platform.css";
 import "./styles/account.css";
@@ -26,6 +26,7 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
   const [notice, setNotice] = useState("");
+  const [build, setBuild] = useState(null);
   const currentClient = useRef("");
   const sessionVersion = useRef(0);
 
@@ -72,6 +73,10 @@ export default function App() {
     void checkSession();
     return unsubscribe;
   }, [checkSession, endSession]);
+
+  useEffect(() => {
+    getBuildInfo().then(setBuild).catch(() => setBuild({ version: "unknown", build: {} }));
+  }, []);
 
   async function signOut() {
     setSigningOut(true);
@@ -127,6 +132,9 @@ export default function App() {
             </select>
           </label>}
           <button onClick={signOut} disabled={signingOut}>Sign out</button>
+          <small title={build?.build?.built_at || "Build time unknown"}>
+            Version {build?.version || "unknown"} · {build?.build?.commit?.slice(0, 12) || "revision unknown"}
+          </small>
         </div>
       </aside>
 

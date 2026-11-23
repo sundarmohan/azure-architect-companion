@@ -38,23 +38,34 @@ async function fetchRequest(path,options={}){
  verifySession();
  if(!r.ok){
   let message=`HTTP ${r.status}`;
+  let correlationId=r.headers.get("X-Correlation-ID")||"";
   try{
    const raw=await r.text();
    const payload=raw?JSON.parse(raw):null;
    if(typeof payload?.detail==="string")message=payload.detail;
-   else if(typeof payload?.detail?.message==="string")message=payload.detail.message;
+   else if(typeof payload?.detail?.message==="string"){
+    message=payload.detail.message;
+    correlationId=payload.detail.correlation_id||correlationId;
+   }
   }catch{ /* A proxy may return a non-JSON error. */ }
   verifySession();
   if(r.status===401&&generation===sessionGeneration&&!["/auth/login","/auth/me"].includes(path)){
    unauthorizedHandler?.();
   }
-  const error=new Error(message);
+  const error=new Error(correlationId?`${message} Support reference: ${correlationId}`:message);
   error.status=r.status;
+  error.correlationId=correlationId;
   throw error;
  }
  const data=r.status===204?null:responseType==="blob"?await r.blob():await r.json();
  verifySession();
  return data;
+}
+
+export async function getBuildInfo(){
+ const response=await fetch(`${API.replace(/\/api\/?$/,"")}/health`,{cache:"no-store"});
+ if(!response.ok) throw new Error(`HTTP ${response.status}`);
+ return response.json();
 }
 
 function refreshGet(path,options){
