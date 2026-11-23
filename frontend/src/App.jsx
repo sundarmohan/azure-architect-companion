@@ -5,6 +5,7 @@ import AzureInventoryWorkspace from "./workspaces/AzureInventoryWorkspace";
 import AzureMonitoringWorkspace from "./workspaces/AzureMonitoringWorkspace";
 import AzureNetworkWorkspace from "./workspaces/AzureNetworkWorkspace";
 import AzureSecurityWorkspace from "./workspaces/AzureSecurityWorkspace";
+import PlatformDashboard from "./workspaces/PlatformDashboard";
 import ComplianceWorkspace from "./workspaces/ComplianceWorkspace";
 import AssessmentWorkspace from "./workspaces/AssessmentWorkspace";
 import { AccountWorkspace, SignInForm } from "./workspaces/AccountWorkspace";
@@ -96,6 +97,7 @@ export default function App() {
         <div className="brand">MONITORAI PLATFORM</div>
         <nav className="nav-list" aria-label="Workspace navigation">
           {activeClient && <>
+            <button className={`nav-item ${workspace === "overview" ? "active" : ""}`} onClick={() => setWorkspace("overview")}>Overview</button>
             <button className={`nav-item ${workspace === "architecture" ? "active" : ""}`} onClick={() => setWorkspace("architecture")}>Architecture Studio</button>
             <button className={`nav-item ${workspace === "inventory" ? "active" : ""}`} onClick={() => setWorkspace("inventory")}>Azure Inventory</button>
             <button className={`nav-item ${workspace === "monitoring" ? "active" : ""}`} onClick={() => setWorkspace("monitoring")}>Monitoring</button>
@@ -125,6 +127,8 @@ export default function App() {
         {workspace === "account" || !activeClient ? (
           <AccountWorkspace user={user} client={activeClient} onMembershipChange={refreshUser}
             onPasswordChanged={() => endSession("Password changed. Sign in with your new password.")} />
+        ) : workspace === "overview" ? (
+          <PlatformDashboard clientName={activeClient.client_name} onOpen={setWorkspace} />
         ) : workspace === "azure" ? (
           <AzureConnectionWorkspace canManage={activeClient.role === "admin"} />
         ) : workspace === "inventory" ? (
