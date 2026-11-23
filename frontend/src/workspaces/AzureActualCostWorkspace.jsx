@@ -3,6 +3,10 @@ import { getAzureActualCost, getAzureConnectionStatus, getAzureCostBudget, saveA
 import { snapshotTime } from "./AzureSnapshotWorkspace";
 
 const utcDate = (date) => date.toISOString().slice(0, 10);
+const DAY_MS = 86400000;
+const BASELINE_DAYS = 7;
+const MIN_INCREASE = 0.5;
+const MIN_CURRENCY_INCREASE = 1;
 
 function coversMonthlyBudget(result, today) {
   const start = new Date(result.start_date);
@@ -10,6 +14,62 @@ function coversMonthlyBudget(result, today) {
   start.setUTCMonth(start.getUTCMonth() + 1, 0);
   const monthEnd = utcDate(start);
   return result.end_date === (monthEnd < today ? monthEnd : today);
+}
+
+function reviewDailyCharges(result, today) {
+  const costs = new Map(result.daily.map(({ usage_date, cost }) => [usage_date, cost]));
+  const previous = [];
+  const anomalies = [];
+  let reviewed = 0;
+  let missing = 0;
+  const reviewEnd = Math.min(Date.parse(result.end_date), Date.parse(today) - DAY_MS);
+  for (let time = Date.parse(result.start_date); time <= reviewEnd; time += DAY_MS) {
+    const date = utcDate(new Date(time));
+    const cost = costs.get(date);
+    if (!Number.isFinite(cost)) {
+      missing++;
+      previous.length = 0;
+      continue;
+    }
+    if (previous.length === BASELINE_DAYS) {
+      const sorted = [...previous].sort((left, right) => left - right);
+      const median = sorted[Math.floor(BASELINE_DAYS / 2)];
+      if (median > 0) {
+        reviewed++;
+        if (cost >= median * (1 + MIN_INCREASE) && cost - median >= MIN_CURRENCY_INCREASE) {
+          anomalies.push({ date, cost, median });
+        }
+      }
+      previous.shift();
+    }
+    previous.push(cost);
+  }
+  return { anomalies, reviewed, missing };
+}
+
+function CostAnomalyReview({ result, today, money }) {
+  const { anomalies, reviewed, missing } = reviewDailyCharges(result, today);
+  const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
+  return <section className="account-form">
+    <h2>Cost anomaly review</h2>
+    <p>For completed UTC days with seven consecutive prior charges and a positive median, flag charges at least
+      50% and {money.format(MIN_CURRENCY_INCREASE)} above that median. Missing charges reset the baseline.</p>
+    {missing > 0 && <p>Missing charge dates in the selected range: {missing}.</p>}
+    {reviewed === 0
+      ? <p>Daily evidence is insufficient for anomaly comparison.</p>
+      : <p>Compared {reviewed} {reviewed === 1 ? "day" : "days"}. {anomalies.length
+        ? "Review the flagged increases." : "No increases met the review threshold."}</p>}
+    {anomalies.length > 0 && <div className="design-table">
+      <table className="table" aria-label="Cost increases for review">
+        <thead><tr><th scope="col">Usage date (UTC)</th><th scope="col">Actual cost</th>
+          <th scope="col">Prior seven-day median</th><th scope="col">Increase</th></tr></thead>
+        <tbody>{anomalies.map(({ date, cost, median }) => <tr key={date}>
+          <td>{date}</td><td>{money.format(cost)}</td><td>{money.format(median)}</td>
+          <td>{percent.format((cost - median) / median)}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </section>;
 }
 
 function SubscriptionBudget({ subscription, canEdit, result, today }) {
@@ -88,7 +148,7 @@ function SubscriptionCosts({ subscription, canEdit }) {
     const end = fields.get("end");
     setError("");
     setResult(null);
-    if (end < start || Date.parse(end) - Date.parse(start) >= 31 * 86400000) {
+    if (end < start || Date.parse(end) - Date.parse(start) >= 31 * DAY_MS) {
       setError("Choose a date range of at most 31 days.");
       return;
     }
@@ -125,6 +185,7 @@ function SubscriptionCosts({ subscription, canEdit }) {
           <td>{day.usage_date}</td><td>{money.format(day.cost)}</td>
         </tr>)}</tbody>
       </table></div>
+      <CostAnomalyReview result={result} today={utcDate(today)} money={money} />
     </>}
     <SubscriptionBudget subscription={subscription} canEdit={canEdit} result={result} today={utcDate(today)} />
   </>;
