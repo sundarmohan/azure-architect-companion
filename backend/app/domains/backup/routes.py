@@ -25,6 +25,10 @@ from .models import AzureRecoveryObjectives
 router = APIRouter()
 ARM = "https://management.azure.com"
 VAULT_PATH = re.compile(r"/subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/Microsoft\.RecoveryServices/vaults/([a-zA-Z0-9-]+)", re.ASCII | re.I)
+ASR_ITEM_PATH = re.compile(
+    r"/replicationFabrics/([\w.()~-]{1,260})/replicationProtectionContainers/([\w.()~-]{1,260})"
+    r"/replicationProtectedItems/([\w.()~-]{1,260})", re.ASCII | re.I,
+)
 MAX_VAULTS = 6
 MAX_ROWS = 25
 PROPERTIES = {
@@ -32,6 +36,7 @@ PROPERTIES = {
     "policies": ("backupManagementType",),
     "protected_items": ("friendlyName", "protectionState", "protectionStatus", "lastBackupStatus",
                         "lastBackupTime", "lastRecoveryPoint", "policyId"),
+    "replication_items": ("friendlyName", "protectionState", "replicationHealth"),
 }
 
 
@@ -104,6 +109,26 @@ def retention_summary(policy):
     return "; ".join(parts)
 
 
+def asr_item_in_vault(item_id, vault):
+    if not isinstance(item_id, str) or not item_id.casefold().startswith(f"{vault.casefold()}/"):
+        return False
+    item = ASR_ITEM_PATH.fullmatch(item_id[len(vault):])
+    return item is not None and not {".", ".."}.intersection(item.groups())
+
+
+def asr_recovery_point(properties):
+    details = properties.get("providerSpecificDetails")
+    value = details.get("lastRecoveryPointReceived") if isinstance(details, dict) else None
+    if isinstance(value, str) and len(value) <= 40:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.utcoffset() is not None:
+            return value
+    return None
+
+
 async def read_rows(http, semaphore, headers, vault, collection, endpoint, version):
     status, payload = await request_json(http, semaphore, f"{ARM}{quote(vault, safe='/')}/{endpoint}",
                                          {"api-version": version}, headers)
@@ -115,6 +140,12 @@ async def read_rows(http, semaphore, headers, vault, collection, endpoint, versi
         for item in items[:MAX_ROWS]:
             props = item.get("properties") if isinstance(item, dict) else None
             if not isinstance(props, dict):
+                if collection == "replication_items" and status == "synced":
+                    status = "partial_failure"
+                continue
+            if collection == "replication_items" and not asr_item_in_vault(item.get("id"), vault):
+                if status == "synced":
+                    status = "partial_failure"
                 continue
             row = {key: props[key][:512] for key in PROPERTIES[collection] if isinstance(props.get(key), str)}
             if collection == "policies":
@@ -122,6 +153,10 @@ async def read_rows(http, semaphore, headers, vault, collection, endpoint, versi
                 if isinstance(name, str):
                     row["name"] = name[:160]
                 row["retention"] = retention_summary(props.get("retentionPolicy"))
+            if collection == "replication_items":
+                point = asr_recovery_point(props)
+                if point:
+                    row["lastRecoveryPointReceived"] = point
             rows.append(row)
     return {"status": status, "rows": rows,
             "truncated": bool(payload.get("nextLink")) or (isinstance(items, list) and len(items) > MAX_ROWS)}
@@ -135,12 +170,14 @@ async def collect_vaults(vaults, values):
     semaphore = asyncio.Semaphore(4)
     async with httpx.AsyncClient(timeout=8, follow_redirects=False) as http:
         async def collect(vault, name):
-            jobs, items, policies = await asyncio.gather(
+            jobs, items, policies, replication = await asyncio.gather(
                 read_rows(http, semaphore, headers, vault, "jobs", "backupJobs", "2025-08-01"),
                 read_rows(http, semaphore, headers, vault, "protected_items", "backupProtectedItems", "2025-02-01"),
                 read_rows(http, semaphore, headers, vault, "policies", "backupPolicies", "2025-08-01"),
+                read_rows(http, semaphore, headers, vault, "replication_items", "replicationProtectedItems", "2025-08-01"),
             )
-            return {"id": vault, "name": name, "jobs": jobs, "protected_items": items, "policies": policies}
+            return {"id": vault, "name": name, "jobs": jobs, "protected_items": items, "policies": policies,
+                    "replication_items": replication}
 
         return await asyncio.gather(*(collect(*vault) for vault in vaults))
 
@@ -153,7 +190,8 @@ async def backup_evidence(request: Request, subscription_id: UUID | None = None,
         return {"status": "inventory_required" if context else "not_configured", "vaults": [], "limitations": []}
     all_vaults = vaults_for_inventory(context.resources, context.subscription_id)
     limitations = ["Each vault shows up to 25 records per evidence type from the first Azure response page.",
-                   "Retention is shown for supported policy shapes. Restore jobs and recovery points require separate validation against recovery objectives."]
+                   "Retention is shown for supported policy shapes. Restore jobs and recovery points require separate validation against recovery objectives.",
+                   "Site Recovery last recovery point received times are shown where provided. Replication status alone cannot establish recovery readiness."]
     if context.inventory_is_stale:
         limitations.append("The latest inventory refresh failed. The vault list may be stale.")
     if len(all_vaults) > MAX_VAULTS:
@@ -170,7 +208,7 @@ async def backup_evidence(request: Request, subscription_id: UUID | None = None,
     except (TimeoutError, httpx.HTTPError):
         vaults, status = [], "provider_error"
     else:
-        statuses = {vault[key]["status"] for vault in vaults for key in ("jobs", "protected_items", "policies")}
+        statuses = {vault[key]["status"] for vault in vaults for key in PROPERTIES}
         status = next(iter(statuses)) if len(statuses) == 1 else "partial_failure"
     await confirm_active_connection(db, request, client_id, context.ciphertext)
     return {"status": status, "retrieved_at": datetime.now(timezone.utc), "vaults": vaults, "limitations": limitations}

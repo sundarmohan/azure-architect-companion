@@ -19,6 +19,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
     monkeypatch.setenv("MONITORAI_AZURE_ENCRYPTION_KEY", Fernet.generate_key().decode())
     primary, secondary = str(uuid4()), str(uuid4())
     status = "synced"
+    security_title = "Example"
     resource = {"id": f"/subscriptions/{primary}/resourceGroups/test/providers/Microsoft.Compute/virtualMachines/test",
                 "name": "test", "type": "Microsoft.Compute/virtualMachines", "resource_group": "test", "location": "eastus"}
 
@@ -32,8 +33,10 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert str(context.subscription_id) == primary and context.resources == [resource]
         payload = {"monitoring": {"resources": [{**resource, "health": "degraded", "health_status": "synced", "metrics": []}]},
                    "network": {"resources": [], "links": []},
-                   "security": {"findings": [{"id": "a" * 64, "code": "storage", "title": "Example",
-                                               "severity": "high", "evidence": [], "source": "azure"}],
+                   "security": {"findings": [{"id": "a" * 64, "code": "storage", "title": security_title,
+                                               "severity": "high", "evidence": ["Recorded Azure setting"],
+                                               "resource_id": resource["id"], "source": "azure",
+                                               "observed_at": "2026-01-01T00:00:00Z"}],
                                 "score": 15, "score_factors": [{"severity": "high", "count": 1, "weight": 15}]}}
         return {kind: (status, payload[kind] if status == "synced" else {}, []) for kind in kinds}
 
@@ -123,6 +126,26 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.put(action_path, headers=first_headers, json={**followup, "status": "in_progress"}).status_code == 409
         assert client.get(actions, headers=first_headers).json() == [completed]
         assert client.get(actions, headers=second_headers).status_code == 404
+        evidence_path = incident_path + "/security-evidence"
+        link_path = evidence_path + "/" + "a" * 64
+        saved_security = client.get(security, headers=first_headers).json()
+        version = {"collected_at": saved_security["last_success_at"]}
+        assert client.put(link_path, headers=second_headers, json=version).status_code == 404
+        assert client.put(link_path, headers=first_headers, params={"subscription_id": secondary}, json=version).status_code == 404
+        assert client.put(link_path, headers=first_headers,
+                          json={"collected_at": "2000-01-01T00:00:00Z"}).status_code == 409
+        linked = client.put(link_path, headers=first_headers, json=version)
+        assert linked.status_code == 200, linked.text
+        evidence = linked.json()
+        assert evidence["title"] == "Example" and evidence["source"] == "azure"
+        assert evidence["resource_id"] == resource["id"] and evidence["observed_at"] == "2026-01-01T00:00:00Z"
+        assert evidence["evidence"] == ["Recorded Azure setting"]
+        security_title = "Changed after evidence linking"
+        refreshed_security = client.post(security + "/refresh", headers=first_headers).json()
+        assert refreshed_security["findings"][0]["title"] == security_title
+        assert client.put(link_path, headers=first_headers, json={"collected_at": refreshed_security["last_success_at"]}).json() == evidence
+        assert client.get(evidence_path, headers=first_headers).json() == [evidence]
+        assert client.get(evidence_path, headers=second_headers).status_code == 404
 
         changed = client.post(monitor + "/refresh", headers=first_headers).json()
         assert changed["resources"][0]["health_alert"]["acknowledged_at"] is None
@@ -137,6 +160,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert sum(event["action"] == "update_azure_health_incident" for event in events) == 1
         assert sum(event["action"] == "create_azure_health_incident_action" for event in events) == 1
         assert sum(event["action"] == "update_azure_health_incident_action" for event in events) == 1
+        assert sum(event["action"] == "link_azure_incident_security_evidence" for event in events) == 1
         assert client.get(incidents, headers=first_headers).json()["incidents"] == [updated.json()]
 
         details = {"status": "in_progress", "owner": "Cloud operations", "due_date": "2026-12-31"}
@@ -175,6 +199,8 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.put(incident_path, headers=first_headers, json=investigation).status_code == 403
         assert client.get(actions, headers=first_headers).json() == [completed]
         assert client.put(action_path, headers=first_headers, json=followup).status_code == 403
+        assert client.get(evidence_path, headers=first_headers).json() == [evidence]
+        assert client.put(link_path, headers=first_headers, json=version).status_code == 403
         assert client.put(schedule, headers=first_headers, json={"enabled": False, "interval_minutes": 5}).status_code == 403
         client.cookies.clear()
         client.cookies.set("monitorai_session", admin)

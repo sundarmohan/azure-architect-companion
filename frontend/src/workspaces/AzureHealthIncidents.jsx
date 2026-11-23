@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import { getAzureHealthIncidents, updateAzureHealthIncident } from "../services/api";
 import AzureIncidentActions from "./AzureIncidentActions";
+import AzureIncidentSecurityEvidence from "./AzureIncidentSecurityEvidence";
 import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 function IncidentRecord({ incident, subscription, canEdit, onUpdate, initiallyOpen }) {
@@ -8,6 +9,7 @@ function IncidentRecord({ incident, subscription, canEdit, onUpdate, initiallyOp
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
   const [showActions, setShowActions] = useState(false);
+  const [showSecurityEvidence, setShowSecurityEvidence] = useState(false);
 
   async function save(event) {
     event.preventDefault();
@@ -62,6 +64,12 @@ function IncidentRecord({ incident, subscription, canEdit, onUpdate, initiallyOp
         {showActions ? "Hide incident actions" : "Show incident actions"}
       </button></div>
       {showActions && <AzureIncidentActions subscription={subscription} incidentId={incident.id} canEdit={canEdit} />}
+      <div><button type="button" aria-expanded={showSecurityEvidence}
+        onClick={() => setShowSecurityEvidence((visible) => !visible)}>
+        {showSecurityEvidence ? "Hide Security evidence" : "Show Security evidence"}
+      </button></div>
+      {showSecurityEvidence && <AzureIncidentSecurityEvidence subscription={subscription}
+        incidentId={incident.id} canEdit={canEdit} />}
     </details>
   </li>;
 }

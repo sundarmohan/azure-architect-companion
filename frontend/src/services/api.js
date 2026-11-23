@@ -157,9 +157,11 @@ export const saveComplianceReview=(id,topic,data)=>request(`/compliance/reviews/
 export const getDevSecOpsFindings=page=>fetchRequest(`/devsecops/findings?${new URLSearchParams({page})}`);
 export const importDevSecOpsFindings=data=>request("/devsecops/findings/import",{method:"POST",body:JSON.stringify(data)});
 export const getGitHubConnection=()=>fetchRequest("/devsecops/github/connection");
+export const getGitHubDependencyAlerts=()=>fetchRequest("/devsecops/github/dependencies");
 export const saveGitHubConnection=data=>request("/devsecops/github/connection",{method:"PUT",body:JSON.stringify(data)});
 export const clearGitHubConnection=()=>request("/devsecops/github/connection",{method:"DELETE"});
 export const getAzureCostRecommendations=id=>fetchRequest(`/azure/cost/recommendations${subscriptionQuery(id)}`);
+export const getComplianceReviewHistory=(subscription,topic,page)=>fetchRequest(`/compliance/reviews/${encodeURIComponent(topic)}/history?${new URLSearchParams({subscription_id:subscription,page})}`);
 export const getComplianceCatalog=()=>fetchRequest("/compliance/catalog");
 export const getGitHubPipeline=(owner,repository)=>fetchRequest(`/devsecops/github/runs?${new URLSearchParams({owner,repository})}`);
 export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQuery(id)}`);
@@ -190,6 +192,13 @@ export const getAzureHealthIncidentActions=(subscription,id)=>fetchRequest(
 export const saveAzureHealthIncidentAction=(subscription,incidentId,actionId,data)=>request(
  `/azure/monitoring/health-incidents/${encodeURIComponent(incidentId)}/actions/${encodeURIComponent(actionId)}${subscriptionQuery(subscription)}`,
  {method:"PUT",body:JSON.stringify(data)},
+);
+export const getAzureIncidentSecurityEvidence=(subscription,incidentId)=>fetchRequest(
+ `/azure/monitoring/health-incidents/${encodeURIComponent(incidentId)}/security-evidence${subscriptionQuery(subscription)}`,
+);
+export const linkAzureIncidentSecurityEvidence=(subscription,incidentId,findingId,collectedAt)=>request(
+ `/azure/monitoring/health-incidents/${encodeURIComponent(incidentId)}/security-evidence/${encodeURIComponent(findingId)}${subscriptionQuery(subscription)}`,
+ {method:"PUT",body:JSON.stringify({collected_at:collectedAt})},
 );
 export const getAzureMonitoringSchedule=id=>fetchRequest(`/azure/monitoring/schedule${subscriptionQuery(id)}`);
 export const updateAzureMonitoringSchedule=(id,data)=>request(`/azure/monitoring/schedule${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});

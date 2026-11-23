@@ -2,19 +2,19 @@ from datetime import date
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.azure import connection_values, select_subscription
-from app.domains.access.models import AzureConnection
+from app.domains.access.models import Account, AzureConnection
 from app.domains.access.routes import audit, client_access, get_db
 from app.domains.monitoring.observation_models import AzureObservation
 
 from .catalog import FRAMEWORK_CATALOG, FRAMEWORK_TOPICS
-from .models import ComplianceReview
+from .models import ComplianceReview, ComplianceReviewHistory
 
 router = APIRouter()
 NEUTRAL_TOPICS = {"transport", "storage", "network", "recovery", "scope"}
@@ -55,6 +55,26 @@ class ReviewRead(ReviewWrite):
     updated_at: AwareDatetime
 
 
+class ReviewHistoryEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    actor_username: str | None = None
+    state: str
+    applicability: str | None
+    outcome: str | None
+    action_status: str | None
+    due_date: date | None
+    evidence_at: AwareDatetime | None
+    recorded_at: AwareDatetime
+    changed_fields: list[str]
+    baseline: bool
+
+
+class ReviewHistoryPage(BaseModel):
+    entries: list[ReviewHistoryEntry]
+    has_next: bool
+
 @router.get("/catalog")
 async def read_catalog(_client_id: UUID = Depends(client_access)):
     return {"version": 1, "entries": FRAMEWORK_CATALOG}
@@ -70,6 +90,28 @@ async def read_reviews(subscription_id: UUID, client_id: UUID = Depends(client_a
         ComplianceReview.client_id == client_id, ComplianceReview.subscription_id == UUID(selected),
     ).order_by(ComplianceReview.topic))).all()
 
+
+@router.get("/reviews/{topic}/history", response_model=ReviewHistoryPage)
+async def read_history(topic: str, subscription_id: UUID, page: int = Query(default=1, ge=1, le=1000),
+                       client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    if topic not in NEUTRAL_TOPICS and topic not in FRAMEWORK_TOPICS:
+        raise HTTPException(404, "Review topic not found")
+    selected = select_subscription(await connection_values(db, client_id), subscription_id)
+    if not selected:
+        raise HTTPException(404, "Subscription not configured")
+    history = ComplianceReviewHistory
+    page_size = 25
+    rows = (await db.execute(
+        select(history, Account.username).outerjoin(Account, Account.id == history.actor_id)
+        .where(history.client_id == client_id, history.subscription_id == UUID(selected), history.topic == topic)
+        .order_by(history.recorded_at.desc(), history.id.desc())
+        .offset((page - 1) * page_size).limit(page_size + 1)
+    )).all()
+    return ReviewHistoryPage(
+        entries=[ReviewHistoryEntry.model_validate(entry).model_copy(update={"actor_username": username})
+                 for entry, username in rows[:page_size]],
+        has_next=page < 1000 and len(rows) > page_size,
+    )
 
 @router.put("/reviews/{topic}", response_model=ReviewRead)
 async def save_review(topic: str, subscription_id: UUID, payload: ReviewSubmission, request: Request,
@@ -106,14 +148,26 @@ async def save_review(topic: str, subscription_id: UUID, payload: ReviewSubmissi
         if not evidence_at and snapshot.status == "partial_failure":
             evidence_at = snapshot.last_attempt_at
 
-    values = {**payload.model_dump(exclude={"snapshot_attempt_at"}), "evidence_at": evidence_at, "updated_at": func.now()}
+    values = {**payload.model_dump(exclude={"snapshot_attempt_at"}), "evidence_at": evidence_at}
+    previous = await db.get(ComplianceReview, (client_id, selected_id, topic))
+    changed_fields = [field for field, value in values.items()
+                      if value != (getattr(previous, field) if previous else None)]
+    if previous and not changed_fields:
+        return ReviewRead.model_validate(previous)
+    values["updated_at"] = func.clock_timestamp()
     review = await db.scalar(insert(ComplianceReview).values(
         client_id=client_id, subscription_id=selected_id, topic=topic, **values,
     ).on_conflict_do_update(
         index_elements=[ComplianceReview.client_id, ComplianceReview.subscription_id, ComplianceReview.topic],
         set_=values,
-    ).returning(ComplianceReview))
+    ).returning(ComplianceReview).execution_options(populate_existing=True))
     response = ReviewRead.model_validate(review)
+    db.add(ComplianceReviewHistory(
+        client_id=client_id, subscription_id=selected_id, topic=topic, actor_id=request.state.account.id,
+        state=response.state, applicability=response.applicability, outcome=response.outcome,
+        action_status=response.action_status, due_date=response.due_date, evidence_at=response.evidence_at,
+        recorded_at=response.updated_at, changed_fields=changed_fields, baseline=False,
+    ))
     audit(db, "update_compliance_review", request.state.account, client_id, f"{selected}:{topic}")
     await db.commit()
     return response

@@ -29,6 +29,14 @@ def test_github_pipeline_is_scoped_and_returns_only_selected_metadata(monkeypatc
         }]}
 
     monkeypatch.setattr(routes, "read_public_runs", saved_runs)
+
+    async def dependency_response(owner, repository, path, token):
+        assert (owner, repository, path, token) == ("octocat", "hello-world", "dependabot/alerts", "fixture_repository_token_0000")
+        return [{"number": 7, "state": "open", "dependency": {"package": {"name": "fixture"}},
+                 "security_advisory": {"ghsa_id": "GHSA-fixture", "description": "omitted"},
+                 "security_vulnerability": {"severity": "high", "first_patched_version": {"identifier": "2.0"}}}]
+
+    monkeypatch.setattr(routes, "read_github_json", dependency_response)
     path = "/api/devsecops/github/runs"
     params = {"owner": "octocat", "repository": "hello-world"}
     with TestClient(app, base_url="https://testserver") as client:
@@ -48,7 +56,15 @@ def test_github_pipeline_is_scoped_and_returns_only_selected_metadata(monkeypatc
         assert evidence["repository"] == "octocat/hello-world"
         assert evidence["runs"][0]["conclusion"] == "success"
         assert "logs_url" not in evidence["runs"][0]
+        assert evidence["runs"][0]["finding_counts"] == {}
         assert calls == [("octocat", "hello-world", None)]
+        assert client.post("/api/devsecops/findings/import", headers=headers, json={"findings": [{
+            **params, "source": "approved-scanner", "category": "dependency", "severity": "high",
+            "fingerprint": "b" * 64, "commit_sha": "a" * 40,
+        }]}).status_code == 200
+        related = client.get(path, params=params, headers=headers)
+        assert related.status_code == 200
+        assert related.json()["runs"][0]["finding_counts"] == {"high": 1}
         connection = "/api/devsecops/github/connection"
         token = "fixture_repository_token_0000"
         configured = client.put(connection, headers=headers, json={**params, "token": token})
@@ -57,9 +73,15 @@ def test_github_pipeline_is_scoped_and_returns_only_selected_metadata(monkeypatc
         assert client.get(connection, headers=headers).json() == params
         assert client.get(path, headers=headers, params=params).status_code == 200
         assert calls[-1] == ("octocat", "hello-world", token)
+        dependencies = "/api/devsecops/github/dependencies"
+        evidence = client.get(dependencies, headers=headers)
+        assert evidence.status_code == 200, evidence.text
+        assert evidence.json()["alerts"] == [{"number": 7, "package": "fixture", "state": "open",
+                                                "severity": "high", "advisory": "GHSA-fixture", "patched_version": "2.0"}]
         other = client.post("/api/auth/clients", headers=WRITE, json={"name": str(uuid4())}).json()["client_id"]
         assert client.get(path, headers={**WRITE, "X-Client-ID": other}, params=params).status_code == 200
         assert calls[-1] == ("octocat", "hello-world", None)
+        assert client.get(dependencies, headers={**WRITE, "X-Client-ID": other}).status_code == 404
         assert client.get(path, headers=headers, params={**params, "repository": "different"}).status_code == 200
         assert calls[-1] == ("octocat", "different", None)
         assert client.delete(connection, headers=headers).status_code == 204

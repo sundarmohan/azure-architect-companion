@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAzureSecurity, getComplianceCatalog, getComplianceReviews, saveComplianceReview } from "../services/api";
+import { getAzureSecurity, getComplianceCatalog, getComplianceReviewHistory, getComplianceReviews, saveComplianceReview } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 const THEMES = {
@@ -9,10 +9,47 @@ const THEMES = {
   recovery: { name: "Key recovery safeguards", codes: ["vault_purge_unprotected"] },
 };
 
+function ReviewHistory({ subscription, topic, updatedAt }) {
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState(null);
+  useEffect(() => {
+    let active = true;
+    getComplianceReviewHistory(subscription, topic, page).then((data) => {
+      if (active) setResult({ page, updatedAt, data });
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setResult({ page, updatedAt, error: failure.message });
+    });
+    return () => { active = false; };
+  }, [subscription, topic, page, updatedAt]);
+
+  const current = result?.page === page && result?.updatedAt === updatedAt ? result : null;
+  return <section className="account-form" aria-label="Review history">
+    {!current && <p role="status">Loading review history…</p>}
+    {current?.error && <p role="alert" className="error">{current.error}</p>}
+    {current?.data && (current.data.entries.length ? <ol className="design-list">
+      {current.data.entries.map((entry) => <li key={entry.id}>
+        <strong>{snapshotTime(entry.recorded_at)} · {displayLabel(entry.state)}</strong>
+        <span>{entry.baseline ? "Existing record at history rollout" : `Recorded by ${entry.actor_username || "Unavailable account"}`}</span>
+        {entry.applicability && <span>Applicability {displayLabel(entry.applicability)}</span>}
+        {entry.outcome && <span>Outcome {displayLabel(entry.outcome)}</span>}
+        {entry.action_status && <span>Corrective action {displayLabel(entry.action_status)} · Due {entry.due_date || "Unscheduled"}</span>}
+        <span>Azure evidence {entry.evidence_at ? snapshotTime(entry.evidence_at) : "Unavailable at review"}</span>
+        {entry.changed_fields.length > 0 && <span>Changed {entry.changed_fields.map(displayLabel).join(", ")}</span>}
+      </li>)}
+    </ol> : <p>No review history on this page.</p>)}
+    {(page > 1 || current?.data?.has_next) && <div className="actions">
+      <button type="button" disabled={page === 1} onClick={() => setPage(page - 1)}>Newer reviews</button>
+      <span aria-live="polite">Page {page}</span>
+      <button type="button" disabled={!current?.data?.has_next} onClick={() => setPage(page + 1)}>Older reviews</button>
+    </div>}
+  </section>;
+}
+
 function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, onSaved, framework }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   async function save(event) {
     event.preventDefault();
@@ -88,6 +125,11 @@ function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, o
     </form>}
     {error && <p className="error" role="alert">{error}</p>}
     {saved && <p role="status">Review saved.</p>}
+    {review && <div className="actions"><button type="button" aria-expanded={showHistory}
+      onClick={() => setShowHistory((open) => !open)}>
+      {showHistory ? "Hide review history" : "Show review history"}
+    </button></div>}
+    {showHistory && <ReviewHistory key={review.updated_at} subscription={subscription} topic={topic} updatedAt={review.updated_at} />}
   </details>;
 }
 

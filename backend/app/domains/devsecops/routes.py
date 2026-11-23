@@ -8,13 +8,13 @@ import httpx
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AwareDatetime, BaseModel, Field, SecretStr
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.azure import cipher
 from app.domains.access.routes import audit, client_access, client_admin, current_account, get_db
-from .models import GitHubConnection
+from .models import GitHubConnection, RepositoryFinding
 
 router = APIRouter()
 API_ROOT = "https://api.github.com"
@@ -33,6 +33,7 @@ class WorkflowRun(BaseModel):
     status: str = Field(max_length=80)
     conclusion: str | None = Field(default=None, max_length=80)
     created_at: AwareDatetime
+    finding_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class PipelineRead(BaseModel):
@@ -90,8 +91,19 @@ async def clear_connection(request: Request, client_id: UUID = Depends(client_ad
     await db.commit()
 
 
-async def read_public_runs(owner, repository, token=None):
-    url = f"{API_ROOT}/repos/{owner}/{repository}/actions/runs"
+def connection_token(connection):
+    binding = f"{connection.client_id}/{connection.owner}/{connection.repository}/"
+    try:
+        plaintext = cipher().decrypt(connection.ciphertext.encode()).decode()
+    except (InvalidToken, UnicodeError):
+        raise HTTPException(503, "GitHub credentials are unavailable.") from None
+    if not plaintext.startswith(binding):
+        raise HTTPException(503, "GitHub credentials are unavailable.")
+    return plaintext[len(binding):]
+
+
+async def read_github_json(owner, repository, path, token=None):
+    url = f"{API_ROOT}/repos/{owner}/{repository}/{path}"
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -115,6 +127,55 @@ async def read_public_runs(owner, repository, token=None):
     return json.loads(body)
 
 
+async def read_public_runs(owner, repository, token=None):
+    return await read_github_json(owner, repository, "actions/runs", token)
+
+
+async def confirm_connection(db, request, client_id, ciphertext):
+    await client_access(request, db, await current_account(request, db))
+    if ciphertext:
+        current = await db.scalar(select(GitHubConnection.ciphertext).where(GitHubConnection.client_id == client_id))
+        if current != ciphertext:
+            raise HTTPException(409, "The GitHub connection changed. Reload the saved evidence.")
+
+
+@router.get("/github/dependencies")
+async def dependency_alerts(request: Request, client_id: UUID = Depends(client_access),
+                            db: AsyncSession = Depends(get_db)):
+    connection = await db.get(GitHubConnection, client_id)
+    if not connection:
+        raise HTTPException(404, "Configure a GitHub repository to review dependency alerts.")
+    owner, repository, ciphertext = connection.owner, connection.repository, connection.ciphertext
+    token = connection_token(connection)
+    await db.rollback()
+    try:
+        payload = await read_github_json(owner, repository, "dependabot/alerts", token)
+        if not isinstance(payload, list):
+            raise ValueError("Unexpected alert list")
+        alerts = []
+        for entry in payload[:RUN_LIMIT]:
+            dependency = entry.get("dependency") or {}
+            package = dependency.get("package") or {}
+            advisory = entry.get("security_advisory") or {}
+            vulnerability = entry.get("security_vulnerability") or {}
+            patched = vulnerability.get("first_patched_version") or {}
+            if type(entry["number"]) is not int or entry["number"] <= 0:
+                continue
+            fields = {"package": package.get("name"), "ecosystem": package.get("ecosystem"),
+                      "manifest": dependency.get("manifest_path"), "state": entry.get("state"),
+                      "severity": vulnerability.get("severity"), "advisory": advisory.get("ghsa_id"),
+                      "patched_version": patched.get("identifier")}
+            alerts.append({"number": entry["number"], **{
+                field: value[:240] for field, value in fields.items() if isinstance(value, str)
+            }})
+    except (TimeoutError, httpx.TimeoutException):
+        raise HTTPException(504, "GitHub did not respond in time.") from None
+    except (AttributeError, KeyError, TypeError, httpx.HTTPError, ValueError):
+        raise HTTPException(502, "GitHub dependency evidence could not be read.") from None
+    await confirm_connection(db, request, client_id, ciphertext)
+    return {"repository": f"{owner}/{repository}", "alerts": alerts, "collected_at": datetime.now(timezone.utc)}
+
+
 @router.get("/github/runs", response_model=PipelineRead)
 async def github_runs(
     owner: Annotated[str, Query(pattern=OWNER_PATTERN)],
@@ -130,14 +191,7 @@ async def github_runs(
     token = None
     if connection and (connection.owner, connection.repository) == (owner.lower(), repository.lower()):
         ciphertext = connection.ciphertext
-        binding = f"{client_id}/{connection.owner}/{connection.repository}/"
-        try:
-            plaintext = cipher().decrypt(ciphertext.encode()).decode()
-        except (InvalidToken, UnicodeError):
-            raise HTTPException(503, "GitHub credentials are unavailable.") from None
-        if not plaintext.startswith(binding):
-            raise HTTPException(503, "GitHub credentials are unavailable.")
-        token = plaintext[len(binding):]
+        token = connection_token(connection)
     await db.rollback()
     try:
         payload = await read_public_runs(owner, repository, token) if token else await read_public_runs(owner, repository)
@@ -151,12 +205,19 @@ async def github_runs(
         raise HTTPException(504, "GitHub did not respond in time.") from None
     except (httpx.HTTPError, ValueError):
         raise HTTPException(502, "GitHub workflow evidence could not be read.") from None
-    if ciphertext:
-        await client_access(request, db, await current_account(request, db))
-        current = await db.scalar(select(GitHubConnection.ciphertext).where(GitHubConnection.client_id == client_id))
-        if current != ciphertext:
-            raise HTTPException(409, "The GitHub connection changed. Reload the workflow evidence.")
+    await confirm_connection(db, request, client_id, ciphertext)
+    counts = {}
+    if runs:
+        result = await db.execute(select(RepositoryFinding.commit_sha, RepositoryFinding.severity, func.count()).where(
+            RepositoryFinding.client_id == client_id,
+            RepositoryFinding.owner == owner.lower(),
+            RepositoryFinding.repository == repository.lower(),
+            RepositoryFinding.commit_sha.in_({run.head_sha for run in runs}),
+        ).group_by(RepositoryFinding.commit_sha, RepositoryFinding.severity))
+        for commit, severity, count in result:
+            counts.setdefault(commit, {})[severity] = count
     for run in runs:
+        run.finding_counts = counts.get(run.head_sha, {})
         if run.name:
             run.name = run.name[:180]
         if run.head_branch:

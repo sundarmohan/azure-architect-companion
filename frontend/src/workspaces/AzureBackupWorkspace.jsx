@@ -15,6 +15,10 @@ const ITEM_FIELDS = [
 const POLICY_FIELDS = [
   ["name", "Policy"], ["backupManagementType", "Management type"], ["retention", "Retention"],
 ];
+const REPLICATION_FIELDS = [
+  ["friendlyName", "Resource"], ["protectionState", "Protection"], ["replicationHealth", "Replication health"],
+  ["lastRecoveryPointReceived", "Last recovery point received"],
+];
 const MAX_RPO_HOURS = 8760;
 const MAX_RTO_MINUTES = 525600;
 
@@ -148,6 +152,8 @@ export default function AzureBackupWorkspace({ canEdit = false }) {
           <EvidenceTable title="Backup and restore jobs" evidence={vault.jobs} fields={JOB_FIELDS} />
           <EvidenceTable title="Protected items" evidence={vault.protected_items} fields={ITEM_FIELDS} />
           <EvidenceTable title="Retention policies" evidence={vault.policies} fields={POLICY_FIELDS} />
+          {vault.replication_items && <EvidenceTable title="Site Recovery replication"
+            evidence={vault.replication_items} fields={REPLICATION_FIELDS} />}
         </section>)}
       </section>}
     </>}

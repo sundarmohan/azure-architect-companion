@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { getAzureConnectionStatus, getAzureSecurity, getComplianceCatalog, getComplianceReviews, saveComplianceReview } from "../services/api";
+import { getAzureConnectionStatus, getAzureSecurity, getComplianceCatalog, getComplianceReviewHistory, getComplianceReviews, saveComplianceReview } from "../services/api";
 import ComplianceWorkspace from "./ComplianceWorkspace";
 
 vi.mock("../services/api", () => ({
   getAzureConnectionStatus: vi.fn(),
   getAzureSecurity: vi.fn(),
   getComplianceCatalog: vi.fn(),
+  getComplianceReviewHistory: vi.fn(),
   getComplianceReviews: vi.fn(),
   saveComplianceReview: vi.fn(),
 }));
@@ -97,4 +98,36 @@ it("shows versioned references and saves a manual framework outcome", async () =
   fireEvent.click(fields.getByRole("button", { name: "Save review" }));
   expect(await fields.findByText("Review saved.")).toBeInTheDocument();
   expect(saveComplianceReview).toHaveBeenLastCalledWith("sub-a", "hipaa_transport_v1", { ...payload, snapshot_attempt_at: null });
+});
+
+it("lets a viewer page through scoped history without loading it until opened", async () => {
+  getAzureConnectionStatus.mockResolvedValue({ configured_subscription_ids: ["sub-a"] });
+  getAzureSecurity.mockResolvedValue({ status: "not_synced", findings: [] });
+  getComplianceReviews.mockResolvedValue([{
+    topic: "transport", state: "reviewed", note: "Current reviewed outcome.",
+    updated_at: "2026-11-02T00:00:00Z", evidence_at: null,
+  }]);
+  getComplianceReviewHistory.mockResolvedValueOnce({
+    has_next: true, entries: [{
+      id: "latest", state: "reviewed", recorded_at: "2026-11-02T00:00:00Z",
+      actor_username: "reviewer", changed_fields: ["state"], baseline: false,
+    }],
+  }).mockResolvedValueOnce({
+    has_next: false, entries: [{
+      id: "baseline", state: "in_review", recorded_at: "2026-11-01T00:00:00Z",
+      actor_username: null, changed_fields: [], baseline: true,
+    }],
+  });
+  render(<ComplianceWorkspace />);
+  const topic = (await screen.findByText("Protected transport")).closest("li");
+  const row = within(topic);
+  fireEvent.click(await row.findByText("Review record · Reviewed"));
+  expect(getComplianceReviewHistory).not.toHaveBeenCalled();
+  fireEvent.click(row.getByRole("button", { name: "Show review history" }));
+  expect(await row.findByText("Recorded by reviewer")).toBeInTheDocument();
+  expect(getComplianceReviewHistory).toHaveBeenCalledWith("sub-a", "transport", 1);
+  expect(row.queryByRole("button", { name: "Save review" })).not.toBeInTheDocument();
+  fireEvent.click(row.getByRole("button", { name: "Older reviews" }));
+  expect(await row.findByText("Existing record at history rollout")).toBeInTheDocument();
+  expect(getComplianceReviewHistory).toHaveBeenLastCalledWith("sub-a", "transport", 2);
 });

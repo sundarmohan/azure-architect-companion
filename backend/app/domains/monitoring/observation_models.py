@@ -95,3 +95,21 @@ class AzureHealthIncidentAction(Base):
     due_date: Mapped[date]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AzureIncidentSecurityEvidence(Base):
+    __tablename__ = "azure_incident_security_evidence"
+
+    incident_id: Mapped[UUID] = mapped_column(
+        ForeignKey("azure_health_incidents.id", ondelete="CASCADE"), primary_key=True,
+    )
+    finding_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(120))
+    code: Mapped[str] = mapped_column(String(120))
+    title: Mapped[str] = mapped_column(String(300))
+    resource_id: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[list[str]] = mapped_column(JSONB)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    actor_id: Mapped[UUID]
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

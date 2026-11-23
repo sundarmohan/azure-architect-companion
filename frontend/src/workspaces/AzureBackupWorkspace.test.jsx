@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { getAzureBackupEvidence, getAzureConnectionStatus, getAzureRecoveryObjectives, saveAzureRecoveryObjectives } from "../services/api";
 import AzureBackupWorkspace, { compareRecoveryEvidence } from "./AzureBackupWorkspace";
@@ -60,4 +60,26 @@ it("lets viewers compare temporary targets while keeping stored objectives read-
   expect(input).toHaveValue(12);
   expect(screen.queryByRole("button", { name: "Save recovery objectives" })).not.toBeInTheDocument();
   expect(saveAzureRecoveryObjectives).not.toHaveBeenCalled();
+});
+
+it("shows reported Site Recovery replication evidence with its coverage limit", async () => {
+  const empty = { status: "synced", rows: [] };
+  getAzureRecoveryObjectives.mockResolvedValue(null);
+  getAzureBackupEvidence.mockResolvedValue({
+    status: "synced",
+    vaults: [{
+      id: "vault-a", name: "Recovery vault A", jobs: empty, protected_items: empty, policies: empty,
+      replication_items: { status: "synced", truncated: true, rows: [
+        { friendlyName: "Replicated VM", protectionState: "Protected", replicationHealth: "Normal",
+          lastRecoveryPointReceived: "2026-11-23T10:00:00Z" },
+        { friendlyName: "Another VM" },
+      ] },
+    }],
+  });
+  render(<AzureBackupWorkspace />);
+  const evidence = within(await screen.findByRole("table", { name: "Site Recovery replication" }));
+  expect(evidence.getByText("Normal")).toBeInTheDocument();
+  expect(evidence.getByText("2026-11-23T10:00:00Z")).toBeInTheDocument();
+  expect(evidence.getAllByText("Unavailable")).toHaveLength(3);
+  expect(screen.getByText("Synced | First page only")).toBeInTheDocument();
 });

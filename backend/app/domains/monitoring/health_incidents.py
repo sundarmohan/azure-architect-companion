@@ -12,12 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.azure import connection_values, select_subscription
 from app.domains.access.routes import audit, client_access, get_db
-from .observation_models import AzureHealthAcknowledgement, AzureHealthIncident, AzureHealthIncidentAction
+from .observation_models import (
+    AzureHealthAcknowledgement, AzureHealthIncident, AzureHealthIncidentAction,
+    AzureIncidentSecurityEvidence, AzureObservation,
+)
 
 router = APIRouter()
 IncidentStatus = Literal["open", "investigating", "resolved"]
 PAGE_SIZE = 20
 MAX_INCIDENT_ACTIONS = 20
+MAX_SECURITY_LINKS = 20
 
 
 class IncidentRead(BaseModel):
@@ -71,6 +75,24 @@ class IncidentActionRead(IncidentActionFields):
     id: UUID
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class SecurityEvidenceLinkWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    collected_at: AwareDatetime
+
+
+class SecurityEvidenceLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    finding_id: str
+    source: str
+    code: str
+    title: str
+    resource_id: str | None
+    evidence: list[str]
+    observed_at: AwareDatetime | None
+    collected_at: AwareDatetime
+    linked_at: AwareDatetime
 
 
 async def selected_subscription(db, client_id, subscription_id):
@@ -199,5 +221,64 @@ async def save_incident_action(incident_id: UUID, action_id: UUID, payload: Inci
     await db.flush()
     audit(db, event, request.state.account, client_id, str(action_id))
     result = IncidentActionRead.model_validate(action)
+    await db.commit()
+    return result
+
+
+@router.get("/monitoring/health-incidents/{incident_id}/security-evidence", response_model=list[SecurityEvidenceLinkRead])
+async def list_incident_security_evidence(incident_id: UUID, subscription_id: UUID | None = None,
+                                          client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    await scoped_incident(db, client_id, subscription_id, incident_id)
+    link = AzureIncidentSecurityEvidence
+    return (await db.scalars(select(link).where(link.incident_id == incident_id)
+                             .order_by(link.linked_at, link.finding_id).limit(MAX_SECURITY_LINKS))).all()
+
+
+def observation_time(value):
+    if isinstance(value, str):
+        try:
+            timestamp = datetime.fromisoformat(value)
+            if timestamp.tzinfo is not None:
+                return timestamp
+        except ValueError:
+            pass
+    return None
+
+
+@router.put("/monitoring/health-incidents/{incident_id}/security-evidence/{finding_id}",
+            response_model=SecurityEvidenceLinkRead)
+async def link_incident_security_evidence(incident_id: UUID, payload: SecurityEvidenceLinkWrite, request: Request,
+                                          finding_id: str = Path(pattern=r"^[a-f0-9]{64}$"),
+                                          subscription_id: UUID | None = None,
+                                          client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    incident = await scoped_incident(db, client_id, subscription_id, incident_id, for_update=True)
+    existing = await db.get(AzureIncidentSecurityEvidence, (incident_id, finding_id))
+    if existing is not None:
+        return SecurityEvidenceLinkRead.model_validate(existing)
+
+    snapshot = await db.scalar(select(AzureObservation).where(
+        AzureObservation.client_id == client_id, AzureObservation.subscription_id == incident.subscription_id,
+        AzureObservation.kind == "security",
+    ).with_for_update(read=True))
+    if snapshot is None or snapshot.last_success_at != payload.collected_at:
+        raise HTTPException(409, "Saved Security evidence changed. Reload the findings and try again.")
+    finding = next((item for item in snapshot.payload.get("findings", []) if item["id"] == finding_id), None)
+    if finding is None:
+        raise HTTPException(404, "Saved Security finding not found")
+    count = await db.scalar(select(func.count()).select_from(AzureIncidentSecurityEvidence).where(
+        AzureIncidentSecurityEvidence.incident_id == incident_id,
+    ))
+    if count >= MAX_SECURITY_LINKS:
+        raise HTTPException(409, f"This incident already has {MAX_SECURITY_LINKS} linked Security findings")
+    link = AzureIncidentSecurityEvidence(
+        incident_id=incident_id, finding_id=finding_id, source=finding["source"],
+        code=finding["code"], title=finding["title"], resource_id=finding.get("resource_id"),
+        evidence=finding.get("evidence", []), observed_at=observation_time(finding.get("observed_at")),
+        collected_at=snapshot.last_success_at, actor_id=request.state.account.id,
+    )
+    db.add(link)
+    await db.flush()
+    audit(db, "link_azure_incident_security_evidence", request.state.account, client_id, finding_id)
+    result = SecurityEvidenceLinkRead.model_validate(link)
     await db.commit()
     return result

@@ -47,6 +47,54 @@ def test_retention_summary_only_uses_supported_policy_fields():
     assert retention_summary(None) == ""
 
 
+def test_replication_evidence_projects_same_vault_items_from_one_read():
+    subscription = UUID("11111111-1111-1111-1111-111111111111")
+    vault = f"/subscriptions/{subscription}/resourceGroups/example/providers/Microsoft.RecoveryServices/vaults/recovery"
+    item_path = "/replicationFabrics/fabric/replicationProtectionContainers/container/replicationProtectedItems/item"
+    good = {
+        "id": vault.upper() + item_path,
+        "properties": {
+            "friendlyName": "Replicated VM",
+            "protectionState": "Protected",
+            "replicationHealth": "Normal",
+            "providerSpecificDetails": {
+                "lastRecoveryPointReceived": "2026-11-23T10:00:00Z",
+                "ipAddress": "192.0.2.1",
+            },
+            "allowedOperations": ["TestFailover"],
+        },
+    }
+    unknown_point = {
+        "id": vault + item_path + "-2",
+        "properties": {"friendlyName": "Another VM", "providerSpecificDetails": {"lastRecoveryPointReceived": "invalid"}},
+    }
+    calls = []
+
+    def transport(request):
+        calls.append(request)
+        assert request.method == "GET"
+        assert request.url.host == "management.azure.com"
+        assert request.url.path == vault + "/replicationProtectedItems"
+        assert dict(request.url.params) == {"api-version": "2025-08-01"}
+        return httpx.Response(200, json={
+            "value": [good, unknown_point, {**good, "id": vault.replace("recovery", "recovery-other") + item_path},
+                      {**good, "id": vault + item_path.replace("/fabric/", "/../")}],
+            "nextLink": "https://example.invalid/ignored",
+        })
+
+    async def read():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            return await read_rows(http, asyncio.Semaphore(1), {}, vault, "replication_items",
+                                   "replicationProtectedItems", "2025-08-01")
+
+    assert asyncio.run(read()) == {"status": "partial_failure", "truncated": True, "rows": [
+        {"friendlyName": "Replicated VM", "protectionState": "Protected", "replicationHealth": "Normal",
+         "lastRecoveryPointReceived": "2026-11-23T10:00:00Z"},
+        {"friendlyName": "Another VM"},
+    ]}
+    assert len(calls) == 1
+
+
 def test_recovery_objectives_are_scoped_persisted_and_audited(monkeypatch):
     monkeypatch.setenv("MONITORAI_OBSERVATION_WORKER", "0")
     monkeypatch.setenv("MONITORAI_BOOTSTRAP_USERNAME", "phase-one-admin")

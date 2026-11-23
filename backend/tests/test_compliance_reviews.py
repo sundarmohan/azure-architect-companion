@@ -71,6 +71,26 @@ def test_compliance_reviews_are_scoped_and_viewer_read_only(monkeypatch):
         assert framework_row["outcome"] == "unable_to_validate"
         assert client.get(path, params=params, headers=own).json() == [framework_row, row]
         assert client.get(path, params=params, headers=foreign).json() == []
+        history_path = f"{path}/transport/history"
+        initial_history = client.get(history_path, params=params, headers=own)
+        assert initial_history.status_code == 200, initial_history.text
+        assert len(initial_history.json()["entries"]) == 1
+        assert client.put(f"{path}/transport", params=params, headers=own, json=payload).json() == row
+        assert len(client.get(history_path, params=params, headers=own).json()["entries"]) == 1
+        saved_changed = client.put(f"{path}/transport", params=params, headers=own, json={
+            **payload, "note": "Neutral review updated after evidence checks.", "action_status": "in_progress",
+        })
+        assert saved_changed.status_code == 200, saved_changed.text
+        row = saved_changed.json()
+        history = client.get(history_path, params=params, headers=own).json()
+        assert not history["has_next"]
+        newest, previous = history["entries"]
+        assert newest["actor_username"] == "phase-one-admin"
+        assert newest["changed_fields"] == ["note", "action_status"]
+        assert newest["action_status"] == "in_progress" and previous["action_status"] == "planned"
+        assert newest["recorded_at"] == row["updated_at"]
+        assert "note" not in newest and "action" not in previous
+        assert client.get(history_path, params=params, headers=foreign).json()["entries"] == []
         username = f"compliance-viewer-{uuid4().hex}"
         assert client.post("/api/auth/users", headers=WRITE,
                            json={"username": username, "password": PASSWORD}).status_code == 201
@@ -81,4 +101,6 @@ def test_compliance_reviews_are_scoped_and_viewer_read_only(monkeypatch):
                            json={"username": username, "password": PASSWORD}).status_code == 200
         assert client.get(path, params=params, headers=own).json() == [framework_row, row]
         assert client.get(path, params=params, headers=foreign).status_code == 403
+        assert client.get(history_path, params=params, headers=own).status_code == 200
+        assert client.get(history_path, params=params, headers=foreign).status_code == 403
         assert client.put(f"{path}/transport", params=params, headers=own, json=payload).status_code == 403
