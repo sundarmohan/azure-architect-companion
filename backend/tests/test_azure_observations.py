@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
@@ -163,6 +163,29 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         link_path = evidence_path + "/" + "a" * 64
         saved_security = client.get(security, headers=first_headers).json()
         version = {"collected_at": saved_security["last_success_at"]}
+        collected_at = datetime.fromisoformat(saved_security["last_success_at"])
+        assessment = client.post("/api/assessments", headers=first_headers, json={
+            "name": "Azure evidence review", "scope": resource["id"],
+            "authorization": "Approved review reference", "environment": "development",
+            "window_start": (collected_at - timedelta(minutes=1)).isoformat(),
+            "window_end": (collected_at + timedelta(minutes=1)).isoformat(),
+        })
+        assert assessment.status_code == 201, assessment.text
+        azure_import = f"/api/assessments/{assessment.json()['id']}/findings/import-azure"
+        import_payload = {"subscription_id": primary, "finding_id": "a" * 64, **version}
+        assert client.post(azure_import, headers=second_headers, json=import_payload).status_code == 404
+        assert client.post(azure_import, headers=first_headers,
+                           json={**import_payload, "collected_at": "2000-01-01T00:00:00Z"}).status_code == 409
+        imported_azure = client.post(azure_import, headers=first_headers, json=import_payload)
+        assert imported_azure.status_code == 200, imported_azure.text
+        assert imported_azure.json() == {"inserted": True, "duplicate": False}
+        assert client.post(azure_import, headers=first_headers, json=import_payload).json() == {
+            "inserted": False, "duplicate": True,
+        }
+        assessment_detail = client.get(f"/api/assessments/{assessment.json()['id']}", headers=first_headers).json()
+        assert assessment_detail["findings"][0]["external_id"] == "a" * 64
+        assert assessment_detail["findings"][0]["source"] == "azure"
+        assert assessment_detail["findings"][0]["evidence"] == "Recorded Azure setting"
         assert client.put(link_path, headers=second_headers, json=version).status_code == 404
         assert client.put(link_path, headers=first_headers, params={"subscription_id": secondary}, json=version).status_code == 404
         assert client.put(link_path, headers=first_headers,
@@ -173,6 +196,16 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert evidence["title"] == "Example" and evidence["source"] == "azure"
         assert evidence["resource_id"] == resource["id"] and evidence["observed_at"] == "2026-01-01T00:00:00Z"
         assert evidence["evidence"] == ["Recorded Azure setting"]
+        linked_finding = client.get(security, headers=first_headers).json()["findings"][0]
+        assert linked_finding["incident_links"] == [{
+            "id": incident["id"], "status": "investigating", "owner": "Cloud operations",
+            "linked_at": evidence["linked_at"],
+        }]
+        imported_detail = client.get(f"/api/assessments/{assessment.json()['id']}", headers=first_headers).json()
+        assert imported_detail["findings"][0]["incident_links"] == [{
+            "id": incident["id"], "status": "investigating", "owner": "Cloud operations",
+            "linked_at": evidence["linked_at"],
+        }]
         security_title = "Changed after evidence linking"
         refreshed_security = client.post(security + "/refresh", headers=first_headers).json()
         assert refreshed_security["findings"][0]["title"] == security_title
@@ -194,6 +227,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert sum(event["action"] == "create_azure_health_incident_action" for event in events) == 1
         assert sum(event["action"] == "update_azure_health_incident_action" for event in events) == 1
         assert sum(event["action"] == "link_azure_incident_security_evidence" for event in events) == 1
+        assert sum(event["action"] == "import_azure_security_finding" for event in events) == 2
         assert sum(event["action"] == "save_azure_metric_threshold" for event in events) == 1
         assert client.get(incidents, headers=first_headers).json()["incidents"] == [updated.json()]
         assert client.get(attention, headers=first_headers).status_code == 200

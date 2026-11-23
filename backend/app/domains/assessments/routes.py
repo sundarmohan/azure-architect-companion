@@ -11,6 +11,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.routes import audit, client_access, client_admin, get_db
+from app.domains.access.azure import connection_values, select_subscription
+from app.domains.monitoring.observation_models import AzureHealthIncident, AzureIncidentSecurityEvidence, AzureObservation
 from .models import Assessment, AssessmentFinding, FindingEvent, FindingRiskAcceptance, VulnerabilitySlaPolicy
 from .sla import FindingSlaRead, finding_sla
 from .sla import router as sla_router
@@ -71,6 +73,12 @@ class ImportBatch(RecordInput):
     findings: list[FindingImport] = Field(min_length=1, max_length=100)
 
 
+class AzureFindingImport(RecordInput):
+    subscription_id: UUID
+    finding_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    collected_at: AwareDatetime
+
+
 class TrackingWrite(RecordInput):
     status: FindingStatus
     owner: str | None = Field(default=None, max_length=120)
@@ -83,6 +91,13 @@ class EventRead(BaseModel):
     status: FindingStatus
     note: str | None
     created_at: AwareDatetime
+
+
+class IncidentLinkRead(BaseModel):
+    id: UUID
+    status: str
+    owner: str | None
+    linked_at: AwareDatetime
 
 
 class RiskAcceptanceWrite(RecordInput):
@@ -112,6 +127,7 @@ class FindingRead(FindingImport, TrackingWrite):
     history: list[EventRead] = Field(default_factory=list)
     risk_acceptance: RiskAcceptanceRead | None = None
     sla: FindingSlaRead | None = None
+    incident_links: list[IncidentLinkRead] = Field(default_factory=list)
 
 
 class AssessmentDetail(AssessmentRead):
@@ -203,6 +219,7 @@ async def assessment_detail(assessment_id: UUID, client_id: UUID = Depends(clien
                                  .order_by(AssessmentFinding.created_at.desc(), AssessmentFinding.id))).all()
     history = {}
     risk_acceptances = {}
+    incident_links = {}
     policy = await db.get(VulnerabilitySlaPolicy, client_id) if findings else None
     today = datetime.now(timezone.utc).date()
     if findings:
@@ -214,10 +231,30 @@ async def assessment_detail(assessment_id: UUID, client_id: UUID = Depends(clien
                   .where(AssessmentFinding.assessment_id == item.id).distinct(FindingRiskAcceptance.finding_id))
         for decision in await db.scalars(latest):
             risk_acceptances[decision.finding_id] = RiskAcceptanceRead.model_validate(decision)
+        azure_finding_ids = [
+            finding.external_id for finding in findings
+            if len(finding.external_id) == 64 and all(character in "0123456789abcdef" for character in finding.external_id)
+        ]
+        if azure_finding_ids:
+            rows = await db.execute(select(
+                AzureIncidentSecurityEvidence.finding_id,
+                AzureHealthIncident.id,
+                AzureHealthIncident.status,
+                AzureHealthIncident.owner,
+                AzureIncidentSecurityEvidence.linked_at,
+            ).join(AzureHealthIncident, AzureHealthIncident.id == AzureIncidentSecurityEvidence.incident_id).where(
+                AzureHealthIncident.client_id == client_id,
+                AzureIncidentSecurityEvidence.finding_id.in_(azure_finding_ids),
+            ).order_by(AzureIncidentSecurityEvidence.linked_at, AzureHealthIncident.id))
+            for external_id, incident_id, status, owner, linked_at in rows:
+                incident_links.setdefault(external_id, []).append(IncidentLinkRead(
+                    id=incident_id, status=status, owner=owner, linked_at=linked_at,
+                ))
     return AssessmentDetail(**AssessmentRead.model_validate(item).model_dump(), findings=[
         FindingRead.model_validate(finding).model_copy(update={
             "history": history.get(finding.id, []), "risk_acceptance": risk_acceptances.get(finding.id),
             "sla": finding_sla(finding, policy, today),
+            "incident_links": incident_links.get(finding.external_id, []),
         })
         for finding in findings
     ])
@@ -238,6 +275,60 @@ async def import_findings(assessment_id: UUID, payload: ImportBatch, request: Re
     audit(db, "import_security_findings", request.state.account, client_id, str(assessment_id))
     await db.commit()
     return {"inserted": inserted, "duplicates": len(values) - inserted}
+
+
+def stored_azure_finding(snapshot, finding_id):
+    return next((item for item in snapshot.payload.get("findings", []) if item.get("id") == finding_id), None)
+
+
+def azure_finding_import(finding, collected_at):
+    evidence = finding.get("evidence")
+    if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
+        raise HTTPException(409, "Saved Azure finding evidence is invalid")
+    source = finding.get("source")
+    title = finding.get("title")
+    severity = finding.get("severity")
+    if (not isinstance(source, str) or not isinstance(title, str) or severity not in Severity.__args__
+            or len(source) > 100 or len(title) > 240):
+        raise HTTPException(409, "Saved Azure finding does not fit the assessment evidence contract")
+    evidence_text = "\n".join(evidence)
+    if not evidence_text or len(evidence_text) > 2000:
+        raise HTTPException(409, "Saved Azure finding evidence does not fit the assessment evidence contract")
+    code = finding.get("code") if isinstance(finding.get("code"), str) else "unspecified"
+    source_observed = finding.get("observed_at") if isinstance(finding.get("observed_at"), str) else "not reported"
+    methodology = (
+        f"Stored Azure evidence; code {code}; source observed {source_observed}; "
+        f"snapshot {collected_at.isoformat()}"
+    )
+    return {
+        "external_id": finding["id"], "title": title, "severity": severity, "source": source.casefold(),
+        "evidence": evidence_text, "methodology": methodology[:400], "observed_at": collected_at,
+    }
+
+
+@router.post("/{assessment_id}/findings/import-azure")
+async def import_azure_finding(assessment_id: UUID, payload: AzureFindingImport, request: Request,
+                               client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    assessment = await scoped_assessment(db, client_id, assessment_id)
+    selected = select_subscription(await connection_values(db, client_id), payload.subscription_id)
+    snapshot = await db.get(AzureObservation, (client_id, UUID(selected), "security")) if selected else None
+    if snapshot is None or snapshot.last_success_at is None:
+        raise HTTPException(404, "Saved Azure security evidence not found")
+    if snapshot.last_success_at != payload.collected_at:
+        raise HTTPException(409, "Saved Azure security evidence changed. Reload it before importing.")
+    if not assessment.window_start <= payload.collected_at <= assessment.window_end:
+        raise HTTPException(422, "Azure evidence collection time is outside the recorded assessment window")
+    finding = stored_azure_finding(snapshot, payload.finding_id)
+    if finding is None:
+        raise HTTPException(404, "Saved Azure security finding not found")
+    values = {"assessment_id": assessment_id, **azure_finding_import(finding, payload.collected_at), "status": "open"}
+    finding_id = await db.scalar(insert(AssessmentFinding).values(values).on_conflict_do_nothing(
+        constraint="uq_assessment_finding_source"
+    ).returning(AssessmentFinding.id))
+    audit(db, "import_azure_security_finding", request.state.account, client_id, payload.finding_id,
+          outcome="success" if finding_id else "duplicate")
+    await db.commit()
+    return {"inserted": bool(finding_id), "duplicate": finding_id is None}
 
 
 @router.put("/{assessment_id}/findings/{finding_id}/risk-acceptance", response_model=RiskAcceptanceRead)

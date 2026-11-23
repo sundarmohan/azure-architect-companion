@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.access.azure import connection_values, select_subscription
 from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, get_db
-from .observation_models import AzureObservation, AzureSecurityTracking
+from .observation_models import (
+    AzureHealthIncident, AzureIncidentSecurityEvidence, AzureObservation, AzureSecurityTracking,
+)
 
 router = APIRouter()
 
@@ -34,7 +36,27 @@ async def attach_tracking(db, snapshot, payload):
         AzureSecurityTracking.finding_id.in_([item["id"] for item in findings]),
     ))
     tracking = {row.finding_id: TrackingWrite(status=row.status, owner=row.owner, due_date=row.due_date) for row in rows}
-    return {**payload, "findings": [{**item, "tracking": tracking.get(item["id"])} for item in findings]}
+    incident_rows = (await db.execute(select(
+        AzureIncidentSecurityEvidence.finding_id,
+        AzureHealthIncident.id,
+        AzureHealthIncident.status,
+        AzureHealthIncident.owner,
+        AzureIncidentSecurityEvidence.linked_at,
+    ).join(AzureHealthIncident, AzureHealthIncident.id == AzureIncidentSecurityEvidence.incident_id).where(
+        AzureHealthIncident.client_id == snapshot.client_id,
+        AzureHealthIncident.subscription_id == snapshot.subscription_id,
+        AzureIncidentSecurityEvidence.finding_id.in_([item["id"] for item in findings]),
+    ).order_by(AzureIncidentSecurityEvidence.linked_at, AzureHealthIncident.id))).all()
+    incident_links = {}
+    for finding_id, incident_id, status, owner, linked_at in incident_rows:
+        incident_links.setdefault(finding_id, []).append({
+            "id": str(incident_id), "status": status, "owner": owner, "linked_at": linked_at.isoformat(),
+        })
+    return {**payload, "findings": [{
+        **item,
+        "tracking": tracking.get(item["id"]),
+        "incident_links": incident_links.get(item["id"], []),
+    } for item in findings]}
 
 
 @router.put("/findings/{finding_id}/tracking", response_model=TrackingWrite)

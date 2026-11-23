@@ -246,6 +246,9 @@ export const recordAssessmentRiskAcceptance=(assessmentId,findingId,data)=>reque
 export const importAssessmentFindings=(id,data)=>request(`/assessments/${encodeURIComponent(id)}/findings/import`,{
  method:"POST",body:JSON.stringify(data),
 });
+export const importAzureAssessmentFinding=(id,data)=>request(`/assessments/${encodeURIComponent(id)}/findings/import-azure`,{
+ method:"POST",body:JSON.stringify(data),
+});
 export const updateAssessmentFinding=(id,findingId,data)=>request(
  `/assessments/${encodeURIComponent(id)}/findings/${encodeURIComponent(findingId)}`,
  {method:"PUT",body:JSON.stringify(data)},

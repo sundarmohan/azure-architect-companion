@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   createAssessment,
+  getAzureConnectionStatus,
+  getAzureSecurity,
   getAssessment,
+  importAzureAssessmentFinding,
   importAssessmentFindings,
   listAssessments,
   updateAssessmentFinding,
@@ -166,6 +169,86 @@ function ImportFindings({ id, onImport }) {
   </form>;
 }
 
+function ImportAzureEvidence({ assessment, onImport }) {
+  const [connection, setConnection] = useState(null);
+  const [subscription, setSubscription] = useState("");
+  const [snapshot, setSnapshot] = useState(null);
+  const [findingId, setFindingId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const subscriptions = connection?.configured_subscription_ids
+    || (connection?.configured_subscription_id ? [connection.configured_subscription_id] : []);
+  const findings = (snapshot?.findings || []).filter((finding) => /^[a-f0-9]{64}$/.test(finding.id || ""));
+  const evidenceTime = Date.parse(snapshot?.last_success_at || "");
+  const evidenceInsideWindow = Number.isFinite(evidenceTime)
+    && evidenceTime >= Date.parse(assessment.window_start) && evidenceTime <= Date.parse(assessment.window_end);
+
+  useEffect(() => {
+    let active = true;
+    getAzureConnectionStatus().then((status) => {
+      if (!active) return;
+      setConnection(status);
+      setSubscription(status.configured_subscription_id || status.configured_subscription_ids?.[0] || "");
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setError(failure.message);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!subscription) return undefined;
+    let active = true;
+    setSnapshot(null);
+    setFindingId("");
+    getAzureSecurity(subscription).then((result) => {
+      if (!active) return;
+      setSnapshot(result);
+      setFindingId(result.findings?.find((finding) => /^[a-f0-9]{64}$/.test(finding.id || ""))?.id || "");
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setError(failure.message);
+    });
+    return () => { active = false; };
+  }, [subscription]);
+
+  async function importFinding() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await importAzureAssessmentFinding(assessment.id, {
+        subscription_id: subscription, finding_id: findingId, collected_at: snapshot.last_success_at,
+      });
+      setMessage(result.duplicate ? "This Azure evidence is already in the assessment." : "Azure evidence imported into the assessment lifecycle.");
+      if (result.inserted) await onImport();
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="card account-form">
+    <h2>Use stored Azure security evidence</h2>
+    <p>This imports an existing saved finding into the authorized assessment. It does not scan, test, remediate, or change Azure.</p>
+    {subscriptions.length > 0 ? <label>Azure subscription<select value={subscription} onChange={(event) => setSubscription(event.target.value)}>
+      {subscriptions.map((id) => <option key={id} value={id}>{id}</option>)}
+    </select></label> : connection && <p>No Azure subscriptions are configured for this client.</p>}
+    {snapshot && <>
+      <p>Evidence snapshot {snapshot.last_success_at ? formatTime(snapshot.last_success_at) : "Unavailable"} · {displayLabel(snapshot.status)}</p>
+      {snapshot.last_success_at && !evidenceInsideWindow && <p className="error">This evidence was collected outside the authorized assessment window and cannot be imported.</p>}
+      {findings.length ? <label>Saved finding<select value={findingId} onChange={(event) => setFindingId(event.target.value)}>
+        {findings.map((finding) => <option key={finding.id} value={finding.id}>{finding.title} · {displayLabel(finding.severity)}</option>)}
+      </select></label> : <p>No importable findings are present in the saved snapshot.</p>}
+      <div><button type="button" disabled={busy || !findingId || !evidenceInsideWindow} onClick={importFinding}>
+        {busy ? "Importing…" : "Import selected Azure evidence"}
+      </button></div>
+    </>}
+    {error && <p className="error" role="alert">{error}</p>}
+    {message && <p role="status">{message}</p>}
+  </section>;
+}
+
 function AssessmentFinding({ assessmentId, finding, canEdit, canManageRisk, onSave, onRiskRecorded }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -222,6 +305,13 @@ function AssessmentFinding({ assessmentId, finding, canEdit, canManageRisk, onSa
         {event.note && <p>{event.note}</p>}
       </li>)}</ol>
     </details>}
+    {finding.incident_links?.length > 0 && <details>
+      <summary>Related incidents ({finding.incident_links.length})</summary>
+      <ul>{finding.incident_links.map((incident) => <li key={incident.id}>
+        <strong>Incident {incident.id}</strong>
+        <span>{displayLabel(incident.status)} · Owner {incident.owner || "Unassigned"} · Linked {formatTime(incident.linked_at)}</span>
+      </li>)}</ul>
+    </details>}
     <FindingRiskAcceptance assessmentId={assessmentId} finding={finding}
       canManage={canManageRisk} onRecord={onRiskRecorded} />
     {canEdit && <details>
@@ -271,6 +361,7 @@ function AssessmentDetail({ assessment, canEdit, canManageRisk, onBack, onImport
       <p>{assessment.authorization}</p>
     </section>
     {canEdit && <ImportFindings id={assessment.id} onImport={onImport} />}
+    {canEdit && <ImportAzureEvidence assessment={assessment} onImport={onImport} />}
     <section className="card account-form">
       <h2>Findings ({findings.length})</h2>
       {findings.length > 0 && <div className="grid">

@@ -119,6 +119,21 @@ describe("Azure Security workspace", () => {
     expect(updateAzureFindingTracking).not.toHaveBeenCalled();
   });
 
+  it("shows incidents already linked to the exact saved finding", async () => {
+    getAzureSecurity.mockResolvedValue({
+      ...snapshot,
+      findings: [{ ...snapshot.findings[0], id: FINDING_ID, incident_links: [{
+        id: "incident-one", status: "investigating", owner: "Security operations",
+        linked_at: "2026-11-01T01:00:00Z",
+      }] }],
+    });
+    render(<AzureSecurityWorkspace canRefresh={false} />);
+
+    fireEvent.click(await screen.findByText("Related incidents (1)"));
+    expect(screen.getByText("Incident incident-one")).toBeInTheDocument();
+    expect(screen.getByText(/Investigating · Owner Security operations/)).toBeInTheDocument();
+  });
+
   it("saves remediation status, owner, and due date with the finding and subscription IDs", async () => {
     getAzureSecurity.mockResolvedValue({
       ...snapshot,

@@ -1,13 +1,18 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AssessmentWorkspace from "./AssessmentWorkspace";
-import { createAssessment, getAssessment, getAssessmentSlaPolicy, importAssessmentFindings, listAssessments, recordAssessmentRiskAcceptance, saveAssessmentSlaPolicy, updateAssessmentFinding } from "../services/api";
+import { createAssessment, getAssessment, getAssessmentSlaPolicy, getAzureConnectionStatus, getAzureSecurity,
+  importAssessmentFindings, importAzureAssessmentFinding, listAssessments, recordAssessmentRiskAcceptance,
+  saveAssessmentSlaPolicy, updateAssessmentFinding } from "../services/api";
 
 vi.mock("../services/api", () => ({
   createAssessment: vi.fn(),
   getAssessment: vi.fn(),
   getAssessmentSlaPolicy: vi.fn(),
+  getAzureConnectionStatus: vi.fn(),
+  getAzureSecurity: vi.fn(),
   importAssessmentFindings: vi.fn(),
+  importAzureAssessmentFinding: vi.fn(),
   listAssessments: vi.fn(),
   recordAssessmentRiskAcceptance: vi.fn(),
   saveAssessmentSlaPolicy: vi.fn(),
@@ -47,6 +52,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   listAssessments.mockResolvedValue([assessment]);
   getAssessment.mockResolvedValue(assessment);
+  getAzureConnectionStatus.mockResolvedValue({ configured_subscription_ids: [] });
 });
 
 describe("Assessments and Vulnerabilities workspace", () => {
@@ -116,6 +122,29 @@ describe("Assessments and Vulnerabilities workspace", () => {
     expect(getAssessment).toHaveBeenCalledTimes(2);
   });
 
+  it("imports an exact saved Azure finding into the authorized lifecycle without refreshing Azure", async () => {
+    const id = "a".repeat(64);
+    getAzureConnectionStatus.mockResolvedValue({
+      configured_subscription_id: "subscription-a", configured_subscription_ids: ["subscription-a"],
+    });
+    getAzureSecurity.mockResolvedValue({
+      status: "synced", last_success_at: "2026-11-22T12:00:00Z",
+      findings: [{ id, title: "Saved Azure finding", severity: "high" }],
+    });
+    importAzureAssessmentFinding.mockResolvedValue({ inserted: true, duplicate: false });
+    render(<AssessmentWorkspace canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Staging review" }));
+
+    expect(await screen.findByText("Saved Azure finding · High")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Import selected Azure evidence" }));
+
+    expect(await screen.findByText("Azure evidence imported into the assessment lifecycle.")).toBeInTheDocument();
+    expect(importAzureAssessmentFinding).toHaveBeenCalledWith(assessment.id, {
+      subscription_id: "subscription-a", finding_id: id, collected_at: "2026-11-22T12:00:00Z",
+    });
+    expect(getAzureSecurity).toHaveBeenCalledTimes(1);
+  });
+
   it("requires a retest note before closing a finding", async () => {
     const closed = { ...finding, status: "closed", retest_note: "Rechecked." };
     updateAssessmentFinding.mockResolvedValue(closed);
@@ -138,6 +167,22 @@ describe("Assessments and Vulnerabilities workspace", () => {
     expect(updateAssessmentFinding).toHaveBeenCalledWith(assessment.id, finding.id, {
       status: "closed", owner: finding.owner, due_date: finding.due_date, retest_note: "Rechecked.",
     });
+  });
+
+  it("shows incidents linked through the imported Azure finding identity", async () => {
+    getAssessment.mockResolvedValue({
+      ...assessment,
+      findings: [{ ...finding, incident_links: [{
+        id: "incident-one", status: "investigating", owner: "Incident response",
+        linked_at: "2026-11-22T13:00:00Z",
+      }] }],
+    });
+    render(<AssessmentWorkspace canEdit={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Staging review" }));
+    fireEvent.click(await screen.findByText("Related incidents (1)"));
+
+    expect(screen.getByText("Incident incident-one")).toBeInTheDocument();
+    expect(screen.getByText(/Investigating · Owner Incident response/)).toBeInTheDocument();
   });
 
   it("records a separate time-bound decision for administrators and displays it to viewers", async () => {

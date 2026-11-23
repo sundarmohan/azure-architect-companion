@@ -227,6 +227,13 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
             {item.recommendation && <p>{item.recommendation}</p>}
             {(overdue || unassigned) && <span>{[overdue && "Overdue", unassigned && "Unassigned"].filter(Boolean).join(" · ")}</span>}
             <details><summary>Evidence</summary><FindingEvidence evidence={item.evidence} /></details>
+            {item.incident_links?.length > 0 && <details>
+              <summary>Related incidents ({item.incident_links.length})</summary>
+              <ul>{item.incident_links.map((incident) => <li key={incident.id}>
+                <strong>Incident {incident.id}</strong>
+                <span>{displayLabel(incident.status)} · Owner {incident.owner || "Unassigned"} · Linked {snapshotTime(incident.linked_at)}</span>
+              </li>)}</ul>
+            </details>}
             {status && <FindingTracking finding={item}
               subscription={subscription} canEdit={canEdit} onSaveStart={() => setTrackingSaved(false)}
               onSave={(id, tracking) => {
