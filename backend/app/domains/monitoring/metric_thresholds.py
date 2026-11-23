@@ -144,32 +144,32 @@ def workspace_result(snapshot, threshold, series):
 
 @router.get("/monitoring/thresholds", response_model=ThresholdWorkspace)
 async def read_threshold(
-    subscription_id: UUID, client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db),
+    subscription_id: UUID | None = None, client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db),
 ):
-    select_subscription(await connection_values(db, client_id), subscription_id)
-    snapshot = await db.get(AzureObservation, (client_id, subscription_id, "monitoring"))
-    threshold = await db.get(AzureMetricThreshold, (client_id, subscription_id))
+    selected = UUID(select_subscription(await connection_values(db, client_id), subscription_id))
+    snapshot = await db.get(AzureObservation, (client_id, selected, "monitoring"))
+    threshold = await db.get(AzureMetricThreshold, (client_id, selected))
     return workspace_result(snapshot, threshold, threshold_series(snapshot))
 
 
 @router.put("/monitoring/thresholds", response_model=ThresholdWorkspace)
 async def save_threshold(
-    payload: ThresholdWrite, request: Request, subscription_id: UUID,
+    payload: ThresholdWrite, request: Request, subscription_id: UUID | None = None,
     client_id: UUID = Depends(client_admin), db: AsyncSession = Depends(get_db),
 ):
     connection = await db.scalar(select(AzureConnection).where(AzureConnection.client_id == client_id).with_for_update())
     values = await connection_values(db, client_id, connection) if connection else None
-    select_subscription(values, subscription_id)
-    snapshot = await db.get(AzureObservation, (client_id, subscription_id, "monitoring"))
+    selected = UUID(select_subscription(values, subscription_id))
+    snapshot = await db.get(AzureObservation, (client_id, selected, "monitoring"))
     series = threshold_series(snapshot)
     selected = series.get((payload.resource_id.casefold(), payload.metric, payload.aggregation))
     if selected is None:
         raise HTTPException(409, "Select a supported metric from the saved monitoring evidence")
     choice, _ = selected
     changes = {**payload.model_dump(), "resource_id": choice.resource_id, "unit": choice.unit}
-    await db.execute(insert(AzureMetricThreshold).values(client_id=client_id, subscription_id=subscription_id, **changes)
+    await db.execute(insert(AzureMetricThreshold).values(client_id=client_id, subscription_id=selected, **changes)
                      .on_conflict_do_update(index_elements=[AzureMetricThreshold.client_id, AzureMetricThreshold.subscription_id],
                                             set_=changes))
-    audit(db, "save_azure_metric_threshold", request.state.account, client_id, str(subscription_id))
+    audit(db, "save_azure_metric_threshold", request.state.account, client_id, str(selected))
     await db.commit()
     return workspace_result(snapshot, ThresholdRead(**changes), series)
