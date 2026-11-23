@@ -2,6 +2,7 @@
 import { getAzureHealthIncidents, updateAzureHealthIncident } from "../services/api";
 import AzureIncidentActions from "./AzureIncidentActions";
 import AzureIncidentSecurityEvidence from "./AzureIncidentSecurityEvidence";
+import AzureIncidentAttention from "./AzureIncidentAttention";
 import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 function IncidentRecord({ incident, subscription, canEdit, onUpdate, initiallyOpen }) {
@@ -108,6 +109,7 @@ export default function AzureHealthIncidents({ subscription, canEdit, initialInc
 
   const additional = result?.incidents.filter((incident) => incident.id !== selected?.id) || [];
   return <>
+    <AzureIncidentAttention subscription={subscription} onSelect={setSelected} />
     {selected && <ul className="design-list">
       <IncidentRecord incident={selected} subscription={subscription} canEdit={canEdit}
         onUpdate={updateRecord} initiallyOpen />

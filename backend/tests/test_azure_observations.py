@@ -96,6 +96,10 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         alert = f"{monitor}/health-alerts/{initial['evidence_id']}/acknowledgement"
         incident_create = f"{monitor}/health-alerts/{initial['evidence_id']}/incident"
         incidents = f"{monitor}/health-incidents"
+        attention = incidents + "/attention"
+        assert client.get(attention, headers=first_headers).json() == {
+            "unassigned_incidents": [], "overdue_actions": [],
+        }
         assert client.put(incident_create, headers=first_headers).status_code == 404
         assert client.put(alert, headers=second_headers).status_code == 409
         assert client.put(alert, headers=first_headers, params={"subscription_id": secondary}).status_code == 409
@@ -111,6 +115,9 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert incident["resource_id"] == resource["id"] and incident["health"] == "degraded"
         assert incident["acknowledged_at"] == saved_ack.json()["acknowledged_at"]
         assert client.put(incident_create, headers=first_headers).json() == incident
+        unassigned = client.get(attention, headers=first_headers).json()
+        assert [item["id"] for item in unassigned["unassigned_incidents"]] == [incident["id"]]
+        assert unassigned["overdue_actions"] == []
         assert client.put(incident_create, headers=second_headers).status_code == 404
         assert client.get(incidents, headers=second_headers).json() == {"incidents": [], "has_next": False}
         assert client.get(incidents, headers=first_headers, params={"subscription_id": secondary}).json()["incidents"] == []
@@ -129,7 +136,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         actions = incident_path + "/actions"
         action_path = actions + "/" + str(uuid4())
         action = {"kind": "corrective", "title": "Review availability configuration", "owner": "Ops",
-                  "status": "open", "due_date": "2026-12-31"}
+                  "status": "open", "due_date": "2020-12-31"}
         assert client.put(action_path, headers=second_headers, json=action).status_code == 404
         assert client.put(action_path, headers=first_headers,
                           params={"subscription_id": secondary}, json=action).status_code == 404
@@ -138,6 +145,10 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert action_result.status_code == 200, action_result.text
         recorded = action_result.json()
         assert recorded["owner"] == "Ops" and recorded["status"] == "open"
+        overdue = client.get(attention, headers=first_headers).json()
+        assert overdue["unassigned_incidents"] == []
+        assert overdue["overdue_actions"][0]["incident"]["id"] == incident["id"]
+        assert overdue["overdue_actions"][0]["action"]["id"] == recorded["id"]
         assert client.put(action_path, headers=first_headers, json=action).json() == recorded
         followup = {**action, "status": "completed", "updated_at": recorded["updated_at"]}
         action_result = client.put(action_path, headers=first_headers, json=followup)
@@ -146,6 +157,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert completed["status"] == "completed"
         assert client.put(action_path, headers=first_headers, json={**followup, "status": "in_progress"}).status_code == 409
         assert client.get(actions, headers=first_headers).json() == [completed]
+        assert client.get(attention, headers=first_headers).json()["overdue_actions"] == []
         assert client.get(actions, headers=second_headers).status_code == 404
         evidence_path = incident_path + "/security-evidence"
         link_path = evidence_path + "/" + "a" * 64
@@ -184,6 +196,7 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert sum(event["action"] == "link_azure_incident_security_evidence" for event in events) == 1
         assert sum(event["action"] == "save_azure_metric_threshold" for event in events) == 1
         assert client.get(incidents, headers=first_headers).json()["incidents"] == [updated.json()]
+        assert client.get(attention, headers=first_headers).status_code == 200
 
         details = {"status": "in_progress", "owner": "Cloud operations", "due_date": "2026-12-31"}
         assert client.put(tracking, headers=second_headers, json=details).status_code == 404

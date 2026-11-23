@@ -6,6 +6,7 @@ import {
   createAzureHealthIncident,
   getAzureConnectionStatus,
   getAzureHealthIncidents,
+  getAzureIncidentAttention,
   getAzureInventory,
   getAzureMonitoring,
   getAzureMetricThreshold,
@@ -21,6 +22,7 @@ vi.mock("../services/api", () => ({
   createAzureHealthIncident: vi.fn(),
   getAzureConnectionStatus: vi.fn(),
   getAzureHealthIncidents: vi.fn(),
+  getAzureIncidentAttention: vi.fn(),
   getAzureInventory: vi.fn(),
   getAzureMonitoring: vi.fn(),
   getAzureMetricThreshold: vi.fn(),
@@ -58,6 +60,7 @@ beforeEach(() => {
     threshold: null, assessment: null, choices: [], snapshot_status: "not_synced",
     last_attempt_at: null, last_success_at: null,
   });
+  getAzureIncidentAttention.mockResolvedValue({ unassigned_incidents: [], overdue_actions: [] });
 });
 
 describe("Azure monitoring workspace", () => {

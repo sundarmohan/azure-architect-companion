@@ -77,6 +77,16 @@ class IncidentActionRead(IncidentActionFields):
     updated_at: AwareDatetime
 
 
+class IncidentActionAttention(BaseModel):
+    incident: IncidentRead
+    action: IncidentActionRead
+
+
+class IncidentAttentionRead(BaseModel):
+    unassigned_incidents: list[IncidentRead]
+    overdue_actions: list[IncidentActionAttention]
+
+
 class SecurityEvidenceLinkWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     collected_at: AwareDatetime
@@ -138,6 +148,35 @@ async def list_health_incidents(subscription_id: UUID | None = None, page: int =
         .order_by(incident.created_at.desc(), incident.id).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE + 1))).all()
     return IncidentPage(incidents=[incident_read(incident, evidence) for incident, evidence in rows[:PAGE_SIZE]],
                         has_next=page < 1000 and len(rows) > PAGE_SIZE)
+
+
+@router.get("/monitoring/health-incidents/attention", response_model=IncidentAttentionRead)
+async def incident_attention(subscription_id: UUID | None = None, client_id: UUID = Depends(client_access),
+                             db: AsyncSession = Depends(get_db)):
+    selected = await selected_subscription(db, client_id, subscription_id)
+    if selected is None:
+        return IncidentAttentionRead(unassigned_incidents=[], overdue_actions=[])
+    incident = AzureHealthIncident
+    evidence = AzureHealthAcknowledgement
+    evidence_join = and_(incident.client_id == evidence.client_id,
+                         incident.subscription_id == evidence.subscription_id,
+                         incident.evidence_id == evidence.evidence_id)
+    scope = (incident.client_id == client_id, incident.subscription_id == selected)
+    unassigned = (await db.execute(select(incident, evidence).join(evidence, evidence_join).where(
+        *scope, incident.status != "resolved", incident.owner.is_(None),
+    ).order_by(incident.created_at, incident.id).limit(PAGE_SIZE))).all()
+    action = AzureHealthIncidentAction
+    overdue = (await db.execute(select(incident, evidence, action).join(
+        evidence, evidence_join,
+    ).join(action, action.incident_id == incident.id).where(
+        *scope, incident.status != "resolved", action.status != "completed", action.due_date < date.today(),
+    ).order_by(action.due_date, action.id).limit(PAGE_SIZE))).all()
+    return IncidentAttentionRead(
+        unassigned_incidents=[incident_read(row, proof) for row, proof in unassigned],
+        overdue_actions=[IncidentActionAttention(
+            incident=incident_read(row, proof), action=IncidentActionRead.model_validate(task),
+        ) for row, proof, task in overdue],
+    )
 
 
 @router.put("/monitoring/health-alerts/{evidence_id}/incident", response_model=IncidentRead)

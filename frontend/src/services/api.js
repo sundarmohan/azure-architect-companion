@@ -182,6 +182,9 @@ export const acknowledgeAzureHealthAlert=(subscription,evidenceId)=>request(
 export const getAzureHealthIncidents=(subscription,page)=>fetchRequest(
  `/azure/monitoring/health-incidents?subscription_id=${encodeURIComponent(subscription)}&page=${page}`,
 );
+export const getAzureIncidentAttention=subscription=>fetchRequest(
+ `/azure/monitoring/health-incidents/attention${subscriptionQuery(subscription)}`,
+);
 export const createAzureHealthIncident=(subscription,evidenceId)=>request(
  `/azure/monitoring/health-alerts/${encodeURIComponent(evidenceId)}/incident${subscriptionQuery(subscription)}`,
  {method:"PUT"},
