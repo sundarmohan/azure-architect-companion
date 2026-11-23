@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { getGitHubPipeline } from "../services/api";
 import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
+import RepositoryFindings from "./RepositoryFindings";
 
-export default function GitHubPipelineWorkspace() {
+export default function GitHubPipelineWorkspace({ canEdit = false }) {
+  const [showFindings, setShowFindings] = useState(false);
   const [busy, setBusy] = useState(false);
   const [evidence, setEvidence] = useState(null);
   const [error, setError] = useState("");
@@ -58,5 +60,9 @@ export default function GitHubPipelineWorkspace() {
         </> : <p>No workflow runs were returned for this repository.</p>}
       </>}
     </section>
+    <div className="actions"><button type="button" aria-expanded={showFindings} onClick={() => setShowFindings((open) => !open)}>
+      {showFindings ? "Hide repository findings" : "Review repository findings"}
+    </button></div>
+    {showFindings && <RepositoryFindings canEdit={canEdit} />}
   </section>;
 }

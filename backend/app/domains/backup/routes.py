@@ -10,12 +10,17 @@ import httpx
 from azure.core.exceptions import AzureError
 from azure.identity.aio import ClientSecretCredential
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.access.azure import confirm_active_connection
-from app.domains.access.routes import client_access, get_db
+from app.domains.access.azure import confirm_active_connection, connection_values, select_subscription
+from app.domains.access.models import AzureConnection
+from app.domains.access.routes import audit, client_access, get_db
 from app.domains.monitoring.observations import observation_context
 from app.domains.monitoring.telemetry import request_json
+from .models import AzureRecoveryObjectives
 
 router = APIRouter()
 ARM = "https://management.azure.com"
@@ -28,6 +33,44 @@ PROPERTIES = {
     "protected_items": ("friendlyName", "protectionState", "protectionStatus", "lastBackupStatus",
                         "lastBackupTime", "lastRecoveryPoint", "policyId"),
 }
+
+
+class RecoveryObjectivesWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+    rpo_hours: int = Field(strict=True, ge=1, le=8760)
+    rto_minutes: int = Field(strict=True, ge=1, le=525600)
+
+
+@router.get("/backup/objectives", response_model=RecoveryObjectivesWrite | None)
+async def read_recovery_objectives(
+    subscription_id: UUID,
+    client_id: UUID = Depends(client_access),
+    db: AsyncSession = Depends(get_db),
+):
+    select_subscription(await connection_values(db, client_id), subscription_id)
+    return await db.get(AzureRecoveryObjectives, (client_id, subscription_id))
+
+
+@router.put("/backup/objectives", response_model=RecoveryObjectivesWrite)
+async def save_recovery_objectives(
+    payload: RecoveryObjectivesWrite,
+    request: Request,
+    subscription_id: UUID,
+    client_id: UUID = Depends(client_access),
+    db: AsyncSession = Depends(get_db),
+):
+    connection = await db.scalar(select(AzureConnection).where(AzureConnection.client_id == client_id).with_for_update())
+    values = await connection_values(db, client_id, connection) if connection else None
+    select_subscription(values, subscription_id)
+    changes = payload.model_dump()
+    await db.execute(insert(AzureRecoveryObjectives).values(
+        client_id=client_id, subscription_id=subscription_id, **changes,
+    ).on_conflict_do_update(
+        index_elements=[AzureRecoveryObjectives.client_id, AzureRecoveryObjectives.subscription_id], set_=changes,
+    ))
+    audit(db, "save_azure_recovery_objectives", request.state.account, client_id, str(subscription_id))
+    await db.commit()
+    return payload
 
 
 def vaults_for_inventory(resources, subscription):

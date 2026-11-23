@@ -1,11 +1,13 @@
 ﻿import { useEffect, useState } from "react";
 import { getAzureHealthIncidents, updateAzureHealthIncident } from "../services/api";
+import AzureIncidentActions from "./AzureIncidentActions";
 import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 function IncidentRecord({ incident, subscription, canEdit, onUpdate, initiallyOpen }) {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
+  const [showActions, setShowActions] = useState(false);
 
   async function save(event) {
     event.preventDefault();
@@ -56,6 +58,10 @@ function IncidentRecord({ incident, subscription, canEdit, onUpdate, initiallyOp
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
       {feedback && <p role="status">{feedback}</p>}
+      <div><button type="button" aria-expanded={showActions} onClick={() => setShowActions((visible) => !visible)}>
+        {showActions ? "Hide incident actions" : "Show incident actions"}
+      </button></div>
+      {showActions && <AzureIncidentActions subscription={subscription} incidentId={incident.id} canEdit={canEdit} />}
     </details>
   </li>;
 }

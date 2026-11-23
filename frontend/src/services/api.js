@@ -149,9 +149,13 @@ const subscriptionQuery=id=>id?`?subscription_id=${encodeURIComponent(id)}`:"";
 export const getAzureActualCost=(id,start,end)=>fetchRequest(`/azure/cost/actual?${new URLSearchParams({subscription_id:id,start_date:start,end_date:end})}`);
 export const getAzureCostBudget=id=>fetchRequest(`/azure/cost/budget${subscriptionQuery(id)}`);
 export const saveAzureCostBudget=(id,data)=>request(`/azure/cost/budget${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
+export const getAzureRecoveryObjectives=id=>fetchRequest(`/azure/backup/objectives${subscriptionQuery(id)}`);
+export const saveAzureRecoveryObjectives=(id,data)=>request(`/azure/backup/objectives${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
 export const getAzureBackupEvidence=id=>fetchRequest(`/azure/backup/evidence${subscriptionQuery(id)}`);
 export const getComplianceReviews=id=>fetchRequest(`/compliance/reviews${subscriptionQuery(id)}`);
 export const saveComplianceReview=(id,topic,data)=>request(`/compliance/reviews/${encodeURIComponent(topic)}${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
+export const getDevSecOpsFindings=page=>fetchRequest(`/devsecops/findings?${new URLSearchParams({page})}`);
+export const importDevSecOpsFindings=data=>request("/devsecops/findings/import",{method:"POST",body:JSON.stringify(data)});
 export const getGitHubPipeline=(owner,repository)=>fetchRequest(`/devsecops/github/runs?${new URLSearchParams({owner,repository})}`);
 export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQuery(id)}`);
 export const refreshAzureInventory=id=>request(`/azure/inventory/refresh${subscriptionQuery(id)}`,{method:"POST"});
@@ -173,6 +177,13 @@ export const createAzureHealthIncident=(subscription,evidenceId)=>request(
 );
 export const updateAzureHealthIncident=(subscription,id,data)=>request(
  `/azure/monitoring/health-incidents/${encodeURIComponent(id)}${subscriptionQuery(subscription)}`,
+ {method:"PUT",body:JSON.stringify(data)},
+);
+export const getAzureHealthIncidentActions=(subscription,id)=>fetchRequest(
+ `/azure/monitoring/health-incidents/${encodeURIComponent(id)}/actions${subscriptionQuery(subscription)}`,
+);
+export const saveAzureHealthIncidentAction=(subscription,incidentId,actionId,data)=>request(
+ `/azure/monitoring/health-incidents/${encodeURIComponent(incidentId)}/actions/${encodeURIComponent(actionId)}${subscriptionQuery(subscription)}`,
  {method:"PUT",body:JSON.stringify(data)},
 );
 export const getAzureMonitoringSchedule=id=>fetchRequest(`/azure/monitoring/schedule${subscriptionQuery(id)}`);

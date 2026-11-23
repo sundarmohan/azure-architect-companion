@@ -1,9 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { getGitHubPipeline } from "../services/api";
+import { getDevSecOpsFindings, getGitHubPipeline, importDevSecOpsFindings } from "../services/api";
 import GitHubPipelineWorkspace from "./GitHubPipelineWorkspace";
 
-vi.mock("../services/api", () => ({ getGitHubPipeline: vi.fn() }));
+vi.mock("../services/api", () => ({
+  getDevSecOpsFindings: vi.fn(),
+  getGitHubPipeline: vi.fn(),
+  importDevSecOpsFindings: vi.fn(),
+}));
 
 it("loads bounded public workflow outcomes and links to GitHub", async () => {
   getGitHubPipeline.mockResolvedValue({
@@ -21,4 +25,29 @@ it("loads bounded public workflow outcomes and links to GitHub", async () => {
     .toHaveAttribute("href", "https://github.com/octocat/hello-world/actions/runs/111");
   expect(screen.getByText("Success")).toBeInTheDocument();
   expect(getGitHubPipeline).toHaveBeenCalledWith("octocat", "hello-world");
+});
+
+it("rejects raw fields before import and refreshes the saved findings page", async () => {
+  const finding = {
+    owner: "octocat", repository: "hello-world", source: "approved-scanner",
+    fingerprint: "a".repeat(64), category: "container", severity: "high",
+  };
+  getDevSecOpsFindings.mockResolvedValueOnce({ findings: [], has_next: false }).mockResolvedValueOnce({
+    findings: [{ ...finding, id: "finding", recommendation: "Review the affected image." }], has_next: false,
+  });
+  importDevSecOpsFindings.mockResolvedValue({ inserted: 1, duplicates: 0 });
+
+  render(<GitHubPipelineWorkspace canEdit />);
+  fireEvent.click(screen.getByRole("button", { name: "Review repository findings" }));
+  expect(await screen.findByText("No imported repository findings on this page.")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Import sanitized finding metadata"));
+  const input = screen.getByLabelText("Finding metadata JSON");
+  fireEvent.change(input, { target: { value: JSON.stringify([{ ...finding, raw_secret: "omit this fixture" }]) } });
+  fireEvent.click(screen.getByRole("button", { name: "Import findings" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("supported metadata fields");
+  expect(importDevSecOpsFindings).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { value: JSON.stringify([finding]) } });
+  fireEvent.click(screen.getByRole("button", { name: "Import findings" }));
+  expect(await screen.findByText("Review the affected image.")).toBeInTheDocument();
+  expect(importDevSecOpsFindings).toHaveBeenCalledWith({ findings: [finding] });
 });

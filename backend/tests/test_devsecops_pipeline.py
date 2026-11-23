@@ -70,3 +70,50 @@ def test_public_workflow_request_uses_fixed_endpoint_without_redirects(monkeypat
     with pytest.raises(HTTPException) as failure:
         asyncio.run(routes.read_public_runs("octocat", "hello-world"))
     assert failure.value.status_code == expected
+
+def test_repository_findings_import_deduplication_and_scope(monkeypatch):
+    monkeypatch.setenv("MONITORAI_OBSERVATION_WORKER", "0")
+    monkeypatch.setenv("MONITORAI_BOOTSTRAP_USERNAME", "phase-one-admin")
+    monkeypatch.setenv("MONITORAI_BOOTSTRAP_PASSWORD", PASSWORD)
+    path = "/api/devsecops/findings"
+    finding = {
+        "owner": "Octocat", "repository": "Hello-World", "source": "ApprovedScanner",
+        "category": "container", "severity": "high", "fingerprint": "a" * 64,
+        "commit_sha": "b" * 40, "image": "ghcr.io/octocat/hello-world:v1",
+    }
+    with TestClient(app, base_url="https://testserver") as client:
+        assert client.get(path).status_code == 401
+        assert client.post("/api/auth/login", headers=WRITE, json={
+            "username": "phase-one-admin", "password": PASSWORD,
+        }).status_code == 200
+        first, other = [client.post("/api/auth/clients", headers=WRITE, json={"name": str(uuid4())})
+                        .json()["client_id"] for _ in range(2)]
+        own, foreign = [{**WRITE, "X-Client-ID": value} for value in (first, other)]
+        result = client.post(path + "/import", headers=own, json={
+            "findings": [finding, {**finding, "owner": "octocat"}],
+        })
+        assert result.status_code == 200, result.text
+        assert result.json() == {"inserted": 1, "duplicates": 1}
+        for invalid in ({"raw_secret": "fixture"}, {"source": "ghp_fixture"}, {"image": "https://registry/image"}):
+            rejected = client.post(path + "/import", headers=own, json={"findings": [{**finding, **invalid}]})
+            assert rejected.status_code == 422
+        results = client.get(path, headers=own).json()
+        assert results["has_next"] is False
+        saved, = results["findings"]
+        assert saved["owner"] == "octocat"
+        assert saved["recommendation"]
+        assert client.get(path, headers=foreign).json()["findings"] == []
+        events = client.get("/api/audit", headers=own).json()
+        assert any(event["action"] == "import_devsecops_findings" for event in events)
+
+        username = f"repo-view-{uuid4().hex}"
+        assert client.post("/api/auth/users", headers=WRITE,
+                           json={"username": username, "password": PASSWORD}).status_code == 201
+        assert client.post(f"/api/auth/clients/{first}/members", headers=WRITE,
+                           json={"username": username, "role": "viewer"}).status_code == 204
+        client.cookies.clear()
+        assert client.post("/api/auth/login", headers=WRITE,
+                           json={"username": username, "password": PASSWORD}).status_code == 200
+        assert client.get(path, headers=own).status_code == 200
+        assert client.get(path, headers=foreign).status_code == 403
+        assert client.post(path + "/import", headers=own, json={"findings": [finding]}).status_code == 403

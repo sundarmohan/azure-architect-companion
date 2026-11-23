@@ -152,9 +152,9 @@ export default function App() {
         ) : workspace === "cost" ? (
           <AzureActualCostWorkspace canEdit={canEdit} />
         ) : workspace === "backup" ? (
-          <AzureBackupWorkspace />
+          <AzureBackupWorkspace canEdit={canEdit} />
         ) : workspace === "devsecops" ? (
-          <GitHubPipelineWorkspace />
+          <GitHubPipelineWorkspace canEdit={canEdit} />
         ) : workspace === "reports" ? (
           <ReportsWorkspace />
         ) : workspace === "assessments" ? (

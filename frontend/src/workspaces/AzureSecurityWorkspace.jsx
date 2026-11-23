@@ -63,6 +63,49 @@ function FindingTracking({ finding, subscription, canEdit, onSave, onSaveStart }
   </details>;
 }
 
+export function correlateThreatEvidence(findings, subscriptionId) {
+  if (!subscriptionId) return [];
+  const prefix = `/subscriptions/${subscriptionId.toLowerCase()}/resourcegroups/`;
+  const byResource = new Map();
+  for (const item of findings) {
+    const key = item.resource_id?.toLowerCase();
+    if (!key?.startsWith(prefix)) continue;
+    const isDefenderAlert = item.source === "azure_defender_alerts" && item.code === "defender_active_alerts";
+    const isActivitySignal = item.source === "azure_activity_rule" && item.code === "repeated_security_control_failures";
+    if (!isDefenderAlert && !isActivitySignal) continue;
+    if (!byResource.has(key)) byResource.set(key, { resource: item.resource_id, alerts: [], activity: [] });
+    const group = byResource.get(key);
+    (isDefenderAlert ? group.alerts : group.activity).push(item);
+  }
+  return [...byResource.values()].filter(({ alerts, activity }) => alerts.length && activity.length);
+}
+
+function ThreatEvidence({ findings, snapshot, subscription, onReview }) {
+  const groups = correlateThreatEvidence(findings, subscription);
+  if (!groups.length) return null;
+  return <section className="card account-form">
+    <h2>Correlated threat evidence</h2>
+    <p>Saved Defender alerts and repeated failed security changes share these resource IDs. Review the source records to establish timing and cause.</p>
+    {snapshot.status !== "synced" && <p>{snapshot.last_success_at
+      ? "Correlation uses retained evidence from the last complete collection."
+      : "Correlation uses incomplete evidence."}</p>}
+    <ul className="design-list">
+      {groups.map(({ resource, alerts, activity }) => <li key={resource.toLowerCase()}>
+        <strong>{resource}</strong>
+        <span>{alerts.length} Defender alert groups | {activity.length} Azure Activity signals</span>
+        <details><summary>Matched evidence</summary>
+          <ul>{[...alerts, ...activity].map((item) => <li key={item.id}>
+            <strong>{item.title}</strong>
+            <span>{displayLabel(item.source)}{item.observed_at && ` | Collected ${snapshotTime(item.observed_at)}`}</span>
+            <FindingEvidence evidence={item.evidence} />
+          </li>)}</ul>
+        </details>
+        <div><button type="button" onClick={() => onReview(resource)}>Filter findings for this resource</button></div>
+      </li>)}
+    </ul>
+  </section>;
+}
+
 function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
   const [severity, setSeverity] = useState("");
   const [source, setSource] = useState("");
@@ -127,6 +170,15 @@ function SecurityFindings({ snapshot, subscription, canEdit, onSaveTracking }) {
         <ul>{snapshot.limitations.map((text) => <li key={text}>{text}</li>)}</ul>
       </>}
     </section>
+    <ThreatEvidence findings={findings} snapshot={snapshot} subscription={subscription} onReview={(resource) => {
+      setFilter(resource);
+      setSeverity("");
+      setSource("");
+      setCategory("");
+      setTrackingStatus("");
+      setAttention("");
+      setPage(0);
+    }} />
     <section className="card account-form">
       <h2>Findings ({findings.length})</h2>
       {trackingSaved && <p role="status">Remediation tracking saved.</p>}

@@ -8,6 +8,7 @@ from app.domains.assessments.routes import router as assessment_router
 from app.domains.backup.routes import router as backup_router
 from app.domains.compliance.routes import router as compliance_router
 from app.domains.cost.actual_routes import router as actual_cost_router
+from app.domains.devsecops.finding_routes import router as devsecops_findings_router
 from app.domains.devsecops.routes import router as devsecops_router
 from app.domains.access.azure import router as settings_router
 from app.domains.access.inventory import router as inventory_router
@@ -79,6 +80,7 @@ api_router.include_router(backup_router, prefix="/azure", tags=["azure-backup"])
 api_router.include_router(actual_cost_router, prefix="/azure/cost", tags=["azure-cost"])
 api_router.include_router(compliance_router, prefix="/compliance", tags=["compliance"])
 api_router.include_router(devsecops_router, prefix="/devsecops", tags=["devsecops"])
+api_router.include_router(devsecops_findings_router, prefix="/devsecops", tags=["devsecops"])
 api_router.include_router(observation_router, prefix="/azure", tags=["azure-observations"])
 api_router.include_router(diagnostics_router, prefix="/azure/diagnostics", tags=["azure-diagnostics"])
 api_router.include_router(security_router, prefix="/azure/security", tags=["azure-security"])

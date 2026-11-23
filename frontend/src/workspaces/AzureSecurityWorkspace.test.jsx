@@ -1,6 +1,19 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import AzureSecurityWorkspace from "./AzureSecurityWorkspace";
+import AzureSecurityWorkspace, { correlateThreatEvidence } from "./AzureSecurityWorkspace";
+
+it("correlates exact resource identities across Defender and Activity signals", () => {
+  const resource = "/subscriptions/sub-a/resourceGroups/example/providers/Microsoft.Compute/virtualMachines/vm";
+  const alert = { resource_id: resource, source: "azure_defender_alerts", code: "defender_active_alerts" };
+  const activity = { resource_id: resource.toUpperCase(), source: "azure_activity_rule", code: "repeated_security_control_failures" };
+  expect(correlateThreatEvidence([
+    alert, activity, { ...alert, resource_id: "/subscriptions/sub-a" },
+    { ...activity, resource_id: "/subscriptions/sub-a" },
+    { ...activity, resource_id: resource.replace("sub-a", "sub-b") },
+    { ...activity, resource_id: resource + "/extensions/extra" },
+    { ...activity, code: "azure_security_control_activity" },
+  ], "sub-a")).toEqual([{ resource, alerts: [alert], activity: [activity] }]);
+});
 import { getAzureConnectionStatus, getAzureSecurity, refreshAzureSecurity, updateAzureFindingTracking } from "../services/api";
 
 vi.mock("../services/api", () => ({

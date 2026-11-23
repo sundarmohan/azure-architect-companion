@@ -1,22 +1,23 @@
 """Client-scoped incident tracking for acknowledged Azure health evidence."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.azure import connection_values, select_subscription
 from app.domains.access.routes import audit, client_access, get_db
-from .observation_models import AzureHealthAcknowledgement, AzureHealthIncident
+from .observation_models import AzureHealthAcknowledgement, AzureHealthIncident, AzureHealthIncidentAction
 
 router = APIRouter()
 IncidentStatus = Literal["open", "investigating", "resolved"]
 PAGE_SIZE = 20
+MAX_INCIDENT_ACTIONS = 20
 
 
 class IncidentRead(BaseModel):
@@ -52,9 +53,43 @@ class IncidentUpdate(BaseModel):
         return self
 
 
+class IncidentActionFields(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kind: Literal["corrective", "preventive"]
+    title: str = Field(min_length=1, max_length=240)
+    owner: str = Field(min_length=1, max_length=120)
+    status: Literal["open", "in_progress", "completed"]
+    due_date: date
+
+
+class IncidentActionWrite(IncidentActionFields):
+    updated_at: AwareDatetime | None = None
+
+
+class IncidentActionRead(IncidentActionFields):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
 async def selected_subscription(db, client_id, subscription_id):
     selected = select_subscription(await connection_values(db, client_id), subscription_id)
     return UUID(selected) if selected else None
+
+
+async def scoped_incident(db, client_id, subscription_id, incident_id, *, for_update=False):
+    selected = await selected_subscription(db, client_id, subscription_id)
+    if selected is None:
+        raise HTTPException(404, "Health incident not found")
+    lookup = select(AzureHealthIncident).where(
+        AzureHealthIncident.id == incident_id, AzureHealthIncident.client_id == client_id,
+        AzureHealthIncident.subscription_id == selected,
+    )
+    incident = await db.scalar(lookup.with_for_update() if for_update else lookup)
+    if incident is None:
+        raise HTTPException(404, "Health incident not found")
+    return incident
 
 
 def incident_read(incident, evidence):
@@ -110,13 +145,7 @@ async def create_health_incident(request: Request, evidence_id: str = Path(patte
 async def update_health_incident(incident_id: UUID, payload: IncidentUpdate, request: Request,
                                  subscription_id: UUID | None = None, client_id: UUID = Depends(client_access),
                                  db: AsyncSession = Depends(get_db)):
-    selected = await selected_subscription(db, client_id, subscription_id)
-    incident = await db.scalar(select(AzureHealthIncident).where(
-        AzureHealthIncident.id == incident_id, AzureHealthIncident.client_id == client_id,
-        AzureHealthIncident.subscription_id == selected,
-    ).with_for_update()) if selected else None
-    if incident is None:
-        raise HTTPException(404, "Health incident not found")
+    incident = await scoped_incident(db, client_id, subscription_id, incident_id, for_update=True)
     changes = (payload.status, payload.owner or None, payload.rca_note or None)
     current = (incident.status, incident.owner, incident.rca_note)
     if changes != current:
@@ -125,7 +154,50 @@ async def update_health_incident(incident_id: UUID, payload: IncidentUpdate, req
         incident.status, incident.owner, incident.rca_note = changes
         incident.updated_at = datetime.now(timezone.utc)
         audit(db, "update_azure_health_incident", request.state.account, client_id, str(incident.id))
-    evidence = await db.get(AzureHealthAcknowledgement, (client_id, selected, incident.evidence_id))
+    evidence = await db.get(AzureHealthAcknowledgement, (client_id, incident.subscription_id, incident.evidence_id))
     result = incident_read(incident, evidence)
+    await db.commit()
+    return result
+
+
+@router.get("/monitoring/health-incidents/{incident_id}/actions", response_model=list[IncidentActionRead])
+async def list_incident_actions(incident_id: UUID, subscription_id: UUID | None = None,
+                                client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    await scoped_incident(db, client_id, subscription_id, incident_id)
+    action = AzureHealthIncidentAction
+    return (await db.scalars(select(action).where(action.incident_id == incident_id)
+                             .order_by(action.created_at, action.id).limit(MAX_INCIDENT_ACTIONS))).all()
+
+
+@router.put("/monitoring/health-incidents/{incident_id}/actions/{action_id}", response_model=IncidentActionRead)
+async def save_incident_action(incident_id: UUID, action_id: UUID, payload: IncidentActionWrite, request: Request,
+                               subscription_id: UUID | None = None, client_id: UUID = Depends(client_access),
+                               db: AsyncSession = Depends(get_db)):
+    await scoped_incident(db, client_id, subscription_id, incident_id, for_update=True)
+    action = await db.get(AzureHealthIncidentAction, (incident_id, action_id))
+    values = payload.model_dump(exclude={"updated_at"})
+    if action is not None and all(getattr(action, key) == value for key, value in values.items()):
+        return IncidentActionRead.model_validate(action)
+    if action is None:
+        if payload.updated_at is not None:
+            raise HTTPException(404, "Health incident action not found")
+        count = await db.scalar(select(func.count()).select_from(AzureHealthIncidentAction).where(
+            AzureHealthIncidentAction.incident_id == incident_id,
+        ))
+        if count >= MAX_INCIDENT_ACTIONS:
+            raise HTTPException(409, f"This incident already has {MAX_INCIDENT_ACTIONS} actions")
+        action = AzureHealthIncidentAction(incident_id=incident_id, id=action_id, **values)
+        db.add(action)
+        event = "create_azure_health_incident_action"
+    else:
+        if payload.updated_at != action.updated_at:
+            raise HTTPException(409, "Health incident action changed. Reload it before editing.")
+        for key, value in values.items():
+            setattr(action, key, value)
+        action.updated_at = datetime.now(timezone.utc)
+        event = "update_azure_health_incident_action"
+    await db.flush()
+    audit(db, event, request.state.account, client_id, str(action_id))
+    result = IncidentActionRead.model_validate(action)
     await db.commit()
     return result

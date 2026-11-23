@@ -79,3 +79,19 @@ class AzureHealthIncident(Base):
     rca_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AzureHealthIncidentAction(Base):
+    __tablename__ = "azure_health_incident_actions"
+
+    incident_id: Mapped[UUID] = mapped_column(
+        ForeignKey("azure_health_incidents.id", ondelete="CASCADE"), primary_key=True,
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(240))
+    owner: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(16))
+    due_date: Mapped[date]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

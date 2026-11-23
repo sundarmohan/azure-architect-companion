@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { getAzureBackupEvidence } from "../services/api";
+import { useEffect, useState } from "react";
+import { getAzureBackupEvidence, getAzureRecoveryObjectives, saveAzureRecoveryObjectives } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 const JOB_FIELDS = [
@@ -15,6 +15,8 @@ const ITEM_FIELDS = [
 const POLICY_FIELDS = [
   ["name", "Policy"], ["backupManagementType", "Management type"], ["retention", "Retention"],
 ];
+const MAX_RPO_HOURS = 8760;
+const MAX_RTO_MINUTES = 525600;
 
 export function compareRecoveryEvidence(vault, retrievedAt, rpoHours, rtoMinutes) {
   const retrieved = Date.parse(retrievedAt);
@@ -32,20 +34,75 @@ export function compareRecoveryEvidence(vault, retrievedAt, rpoHours, rtoMinutes
   };
 }
 
-function RecoveryObjectives({ vaults, retrievedAt }) {
+function RecoveryObjectives({ vaults, retrievedAt, subscription, canEdit }) {
   const [rpoHours, setRpoHours] = useState("");
   const [rtoMinutes, setRtoMinutes] = useState("");
-  const usable = Number(rpoHours) > 0 && Number(rtoMinutes) > 0;
-  return <section className="account-form">
+  const [saved, setSaved] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const rpo = Number(rpoHours);
+  const rto = Number(rtoMinutes);
+  const usable = Number.isInteger(rpo) && rpo >= 1 && rpo <= MAX_RPO_HOURS
+    && Number.isInteger(rto) && rto >= 1 && rto <= MAX_RTO_MINUTES;
+
+  useEffect(() => {
+    let active = true;
+    getAzureRecoveryObjectives(subscription).then((objectives) => {
+      if (!active || !objectives) return;
+      setSaved(objectives);
+      setRpoHours(String(objectives.rpo_hours));
+      setRtoMinutes(String(objectives.rto_minutes));
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setError(failure.message);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [subscription]);
+
+  async function save(event) {
+    event.preventDefault();
+    if (!canEdit || !usable) return;
+    setError("");
+    setFeedback("");
+    setSaving(true);
+    try {
+      const objectives = await saveAzureRecoveryObjectives(subscription, { rpo_hours: rpo, rto_minutes: rto });
+      setSaved(objectives);
+      setFeedback("Recovery objectives saved.");
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="card account-form">
     <h3>Recovery objectives review</h3>
     <p>Compare observed recovery point age and completed restore job duration with your targets. Application recovery and unobserved resources require further evidence.</p>
-    <div className="grid">
-      <label>Recovery point objective (hours)<input type="number" min="1" value={rpoHours} onChange={(event) => setRpoHours(event.target.value)} /></label>
-      <label>Recovery time objective (minutes)<input type="number" min="1" value={rtoMinutes} onChange={(event) => setRtoMinutes(event.target.value)} /></label>
-    </div>
-    {usable && <ul aria-label="Observed recovery comparison">
+    {loading && <p role="status">Loading saved objectives…</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+    {saved && <p>Saved targets for this subscription: {saved.rpo_hours} hours RPO and {saved.rto_minutes} minutes RTO.</p>}
+    {!loading && !error && !saved && <p>No recovery objectives are saved for this subscription.</p>}
+    <form className="account-form" onSubmit={save}>
+      <fieldset disabled={loading || saving}>
+        <legend>Comparison targets</legend>
+        <div className="grid">
+          <label>Recovery point objective (hours)<input type="number" min="1" max={MAX_RPO_HOURS} step="1" required
+            value={rpoHours} onChange={(event) => setRpoHours(event.target.value)} /></label>
+          <label>Recovery time objective (minutes)<input type="number" min="1" max={MAX_RTO_MINUTES} step="1" required
+            value={rtoMinutes} onChange={(event) => setRtoMinutes(event.target.value)} /></label>
+        </div>
+        {canEdit && <button type="submit" disabled={!usable}>{saving ? "Saving…" : "Save recovery objectives"}</button>}
+      </fieldset>
+    </form>
+    {feedback && <p role="status">{feedback}</p>}
+    {usable && vaults.length === 0 && <p>Vault evidence is unavailable for comparison.</p>}
+    {usable && vaults.length > 0 && <ul aria-label="Observed recovery comparison">
       {vaults.map((vault) => {
-        const evidence = compareRecoveryEvidence(vault, retrievedAt, Number(rpoHours), Number(rtoMinutes));
+        const evidence = compareRecoveryEvidence(vault, retrievedAt, rpo, rto);
         return <li key={vault.id}>
           <strong>{vault.name}</strong>
           <p>{evidence.recoveryPoints
@@ -74,22 +131,25 @@ function EvidenceTable({ title, evidence, fields }) {
   </section>;
 }
 
-export default function AzureBackupWorkspace() {
+export default function AzureBackupWorkspace({ canEdit = false }) {
   return <AzureSnapshotWorkspace title="Backup and recovery"
     description="Review Azure Recovery Services vault evidence for a configured subscription."
     canRefresh={false} loadSnapshot={getAzureBackupEvidence}>
-    {(snapshot) => snapshot && <section className="card account-form">
-      <h2>Recovery Services evidence</h2>
-      {snapshot.status === "no_vaults_in_inventory" && <p>No Recovery Services vaults were found in the saved inventory.</p>}
-      {snapshot.retrieved_at && <p>Retrieved {snapshotTime(snapshot.retrieved_at)}</p>}
-      {snapshot.limitations?.length > 0 && <ul>{snapshot.limitations.map((item) => <li key={item}>{item}</li>)}</ul>}
-      {snapshot.vaults.length > 0 && <RecoveryObjectives vaults={snapshot.vaults} retrievedAt={snapshot.retrieved_at} />}
-      {snapshot.vaults.map((vault) => <section key={vault.id} className="card account-form">
-        <h3>{vault.name}</h3>
-        <EvidenceTable title="Backup and restore jobs" evidence={vault.jobs} fields={JOB_FIELDS} />
-        <EvidenceTable title="Protected items" evidence={vault.protected_items} fields={ITEM_FIELDS} />
-        <EvidenceTable title="Retention policies" evidence={vault.policies} fields={POLICY_FIELDS} />
-      </section>)}
-    </section>}
+    {(snapshot, subscription) => <>
+      <RecoveryObjectives vaults={snapshot?.vaults || []} retrievedAt={snapshot?.retrieved_at}
+        subscription={subscription} canEdit={canEdit} />
+      {snapshot && <section className="card account-form">
+        <h2>Recovery Services evidence</h2>
+        {snapshot.status === "no_vaults_in_inventory" && <p>No Recovery Services vaults were found in the saved inventory.</p>}
+        {snapshot.retrieved_at && <p>Retrieved {snapshotTime(snapshot.retrieved_at)}</p>}
+        {snapshot.limitations?.length > 0 && <ul>{snapshot.limitations.map((item) => <li key={item}>{item}</li>)}</ul>}
+        {snapshot.vaults.map((vault) => <section key={vault.id} className="card account-form">
+          <h3>{vault.name}</h3>
+          <EvidenceTable title="Backup and restore jobs" evidence={vault.jobs} fields={JOB_FIELDS} />
+          <EvidenceTable title="Protected items" evidence={vault.protected_items} fields={ITEM_FIELDS} />
+          <EvidenceTable title="Retention policies" evidence={vault.policies} fields={POLICY_FIELDS} />
+        </section>)}
+      </section>}
+    </>}
   </AzureSnapshotWorkspace>;
 }
