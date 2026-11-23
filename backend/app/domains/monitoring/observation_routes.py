@@ -12,12 +12,14 @@ from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, client_admin, get_db
 from .health_alerts import attach_health_alerts
 from .health_alerts import router as health_alert_router
+from .health_incidents import router as health_incident_router
 from .observation_models import AzureObservation, AzureObservationSchedule
 from .observations import ObservationKind, refresh_observations
 from .security_routes import attach_tracking
 
 router = APIRouter()
 router.include_router(health_alert_router)
+router.include_router(health_incident_router)
 
 
 class ObservationRead(BaseModel):

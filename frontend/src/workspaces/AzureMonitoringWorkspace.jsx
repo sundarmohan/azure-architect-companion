@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   acknowledgeAzureHealthAlert,
+  createAzureHealthIncident,
   getAzureMonitoring,
   getAzureMonitoringSchedule,
   refreshAzureMonitoring,
@@ -8,6 +9,7 @@ import {
 } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 import AzureDiagnostics from "./AzureDiagnostics";
+import AzureHealthIncidents from "./AzureHealthIncidents";
 
 const NUMBER_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
 
@@ -52,16 +54,16 @@ function MetricSeries({ metric }) {
   </details>;
 }
 
-function HealthTriage({ snapshot, resources, subscription, canAcknowledge, onSelect, onAcknowledge }) {
+function HealthTriage({ snapshot, resources, subscription, canAcknowledge, onSelect, onAcknowledge, onOpenIncident }) {
   const [pending, setPending] = useState(null);
   const [error, setError] = useState("");
 
-  async function acknowledge(evidenceId) {
+  async function saveEvidence(evidenceId, save, onSave) {
     setPending(evidenceId);
     setError("");
     try {
-      const saved = await acknowledgeAzureHealthAlert(subscription, evidenceId);
-      onAcknowledge(saved);
+      const saved = await save(subscription, evidenceId);
+      onSave(saved);
     } catch (failure) {
       if (failure.name !== "AbortError") setError(failure.message);
     } finally {
@@ -94,11 +96,18 @@ function HealthTriage({ snapshot, resources, subscription, canAcknowledge, onSel
           <td>{displayLabel(resource.health)}</td>
           <td>{resource.location || "Unknown"}</td>
           <td>{resource.health_alert?.acknowledged_at
-            ? `Acknowledged ${snapshotTime(resource.health_alert.acknowledged_at)}`
+            ? <>
+              <span>Acknowledged {snapshotTime(resource.health_alert.acknowledged_at)}</span>
+              {canAcknowledge && <div><button type="button" disabled={pending !== null}
+                aria-label={`Create or open incident for ${resource.name || resource.id}`}
+                onClick={() => saveEvidence(resource.health_alert.evidence_id, createAzureHealthIncident, onOpenIncident)}>
+                {pending === resource.health_alert.evidence_id ? "Saving..." : "Create or open incident"}
+              </button></div>}
+            </>
             : resource.health_alert && canAcknowledge
               ? <button type="button" disabled={pending !== null}
                   aria-label={`Acknowledge ${resource.name || resource.id}`}
-                  onClick={() => acknowledge(resource.health_alert.evidence_id)}>
+                  onClick={() => saveEvidence(resource.health_alert.evidence_id, acknowledgeAzureHealthAlert, onAcknowledge)}>
                   {pending === resource.health_alert.evidence_id ? "Saving…" : "Acknowledge"}
                 </button>
               : resource.health_alert ? "Pending acknowledgement" : "Unavailable"}</td>
@@ -112,6 +121,9 @@ function HealthTriage({ snapshot, resources, subscription, canAcknowledge, onSel
 function MonitoringResources({ snapshot, subscription, canAcknowledge, onAcknowledge }) {
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [showIncidents, setShowIncidents] = useState(false);
+  const [openedIncident, setOpenedIncident] = useState(null);
+  const [incidentRevision, setIncidentRevision] = useState(0);
   const detailsHeading = useRef(null);
   const resources = snapshot.resources || [];
   const query = filter.trim().toLowerCase();
@@ -122,11 +134,24 @@ function MonitoringResources({ snapshot, subscription, canAcknowledge, onAcknowl
 
   return <>
     <HealthTriage snapshot={snapshot} resources={resources} subscription={subscription}
-      canAcknowledge={canAcknowledge} onAcknowledge={onAcknowledge} onSelect={(id) => {
+      canAcknowledge={canAcknowledge} onAcknowledge={onAcknowledge} onOpenIncident={(incident) => {
+      setOpenedIncident(incident);
+      setShowIncidents(true);
+      setIncidentRevision((version) => version + 1);
+    }} onSelect={(id) => {
       setFilter("");
       setSelectedId(id);
       detailsHeading.current?.focus();
     }} />
+    <section className="card account-form">
+      <h2>Health incidents</h2>
+      <div><button type="button" aria-expanded={showIncidents} onClick={() => setShowIncidents((visible) => !visible)}>
+        {showIncidents ? "Hide health incidents" : "Show health incidents"}
+      </button></div>
+      {incidentRevision > 0 && <p key={incidentRevision} role="status">Incident recorded for the acknowledged evidence.</p>}
+      {showIncidents && <AzureHealthIncidents key={incidentRevision} subscription={subscription}
+        canEdit={canAcknowledge} initialIncident={openedIncident} />}
+    </section>
     <section className="card account-form">
       <h2 ref={detailsHeading} tabIndex={-1}>Resource health and metrics ({resources.length})</h2>
       {snapshot.limitations?.length > 0 && <ul>{snapshot.limitations.map((item) => <li key={item}>{item}</li>)}</ul>}

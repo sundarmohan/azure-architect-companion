@@ -5,6 +5,8 @@ import AzureInventoryWorkspace from "./workspaces/AzureInventoryWorkspace";
 import AzureMonitoringWorkspace from "./workspaces/AzureMonitoringWorkspace";
 import AzureNetworkWorkspace from "./workspaces/AzureNetworkWorkspace";
 import AzureSecurityWorkspace from "./workspaces/AzureSecurityWorkspace";
+import AzureActualCostWorkspace from "./workspaces/AzureActualCostWorkspace";
+import AzureBackupWorkspace from "./workspaces/AzureBackupWorkspace";
 import PlatformDashboard from "./workspaces/PlatformDashboard";
 import ComplianceWorkspace from "./workspaces/ComplianceWorkspace";
 import AssessmentWorkspace from "./workspaces/AssessmentWorkspace";
@@ -105,6 +107,8 @@ export default function App() {
             <button className={`nav-item ${workspace === "security" ? "active" : ""}`} onClick={() => setWorkspace("security")}>Security</button>
             <button className={`nav-item ${workspace === "compliance" ? "active" : ""}`} onClick={() => setWorkspace("compliance")}>Compliance</button>
             <button className={`nav-item ${workspace === "assessments" ? "active" : ""}`} onClick={() => setWorkspace("assessments")}>Assessments</button>
+            <button className={`nav-item ${workspace === "cost" ? "active" : ""}`} onClick={() => setWorkspace("cost")}>Cost</button>
+            <button className={`nav-item ${workspace === "backup" ? "active" : ""}`} onClick={() => setWorkspace("backup")}>Backup</button>
             <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
           </>}
           <button className={`nav-item ${workspace === "account" ? "active" : ""}`} onClick={() => setWorkspace("account")}>Account</button>
@@ -140,7 +144,11 @@ export default function App() {
         ) : workspace === "security" ? (
           <AzureSecurityWorkspace canRefresh={canEdit} />
         ) : workspace === "compliance" ? (
-          <ComplianceWorkspace />
+          <ComplianceWorkspace canEdit={canEdit} />
+        ) : workspace === "cost" ? (
+          <AzureActualCostWorkspace />
+        ) : workspace === "backup" ? (
+          <AzureBackupWorkspace />
         ) : workspace === "assessments" ? (
           <AssessmentWorkspace canEdit={canEdit} />
         ) : (

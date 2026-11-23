@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import date, datetime, timedelta, timezone
+from math import isfinite
 from typing import Any
 
 import httpx
 
 try:
-    from azure.identity import ClientSecretCredential
+    from azure.identity.aio import ClientSecretCredential
 except Exception:  # pragma: no cover - import guard for optional dependency
     ClientSecretCredential = None  # type: ignore[assignment]
 
@@ -23,6 +24,7 @@ class AzureCostManagementAdapter:
         subscription_id: str,
         start_date: date,
         end_date: date,
+        credentials: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if end_date < start_date:
             return {
@@ -42,9 +44,15 @@ class AzureCostManagementAdapter:
                 "error": "azure-identity is not installed; actual cost query is unavailable",
             }
 
-        tenant_id = (os.getenv("AZURE_TENANT_ID") or "").strip()
-        client_id = (os.getenv("AZURE_CLIENT_ID") or "").strip()
-        client_secret = (os.getenv("AZURE_CLIENT_SECRET") or "").strip()
+        if credentials is None:
+            credentials = {
+                "tenant_id": os.getenv("AZURE_TENANT_ID") or "",
+                "client_id": os.getenv("AZURE_CLIENT_ID") or "",
+                "client_secret": os.getenv("AZURE_CLIENT_SECRET") or "",
+            }
+        tenant_id = credentials.get("tenant_id", "").strip()
+        client_id = credentials.get("client_id", "").strip()
+        client_secret = credentials.get("client_secret", "")
         if not tenant_id or not client_id or not client_secret:
             return {
                 "available": False,
@@ -60,7 +68,7 @@ class AzureCostManagementAdapter:
             "timeframe": "Custom",
             "timePeriod": {
                 "from": datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc).isoformat(),
-                "to": datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc).isoformat(),
+                "to": datetime.combine(end_date, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc).isoformat(),
             },
             "dataset": {
                 "granularity": "Daily",
@@ -74,16 +82,16 @@ class AzureCostManagementAdapter:
         }
 
         try:
-            credential = ClientSecretCredential(
+            async with ClientSecretCredential(
                 tenant_id=tenant_id,
                 client_id=client_id,
                 client_secret=client_secret,
-            )
-            token = credential.get_token("https://management.azure.com/.default")
-        except Exception as exc:
+            ) as credential:
+                token = await credential.get_token("https://management.azure.com/.default")
+        except Exception:
             return {
                 "available": False,
-                "error": f"Azure authentication failed for actual cost query: {exc}",
+                "error": "Azure authentication failed for actual cost query",
             }
 
         try:
@@ -103,27 +111,12 @@ class AzureCostManagementAdapter:
                 }
             response.raise_for_status()
 
-            payload = response.json() or {}
-            props = payload.get("properties") or {}
-            columns = props.get("columns") or []
-            rows = props.get("rows") or []
-
-            idx_cost = self._column_index(columns, "Cost")
-            idx_currency = self._column_index(columns, "Currency")
-            idx_date = self._column_index(columns, "UsageDate")
-
-            total = 0.0
-            currency = "USD"
-            daily: list[dict[str, Any]] = []
-            for row in rows:
-                if not isinstance(row, list):
-                    continue
-                cost_val = self._safe_float(row[idx_cost]) if idx_cost is not None and idx_cost < len(row) else 0.0
-                total += cost_val
-                if idx_currency is not None and idx_currency < len(row) and row[idx_currency]:
-                    currency = str(row[idx_currency])
-                usage_date = str(row[idx_date]) if idx_date is not None and idx_date < len(row) else ""
-                daily.append({"usage_date": usage_date, "cost": round(cost_val, 2)})
+            props = {} if response.status_code == 204 else response.json()["properties"]
+            if props.get("nextLink"):
+                return {"available": False, "error": "Azure returned a partial cost result. Select a shorter date range."}
+            currency, total, daily = self._daily_charges(props, start_date, end_date)
+            if not daily:
+                return {"available": False, "error": "Azure returned no billed charges for the selected dates"}
 
             return {
                 "available": True,
@@ -141,10 +134,10 @@ class AzureCostManagementAdapter:
                 "available": False,
                 "error": "Azure Cost Management query timed out",
             }
-        except Exception as exc:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError, AttributeError, OverflowError):
             return {
                 "available": False,
-                "error": f"Azure Cost Management query failed: {exc}",
+                "error": "Azure Cost Management did not return a usable cost result",
             }
 
     async def _post_cost_query(
@@ -199,8 +192,37 @@ class AzureCostManagementAdapter:
                 return idx
         return None
 
-    def _safe_float(self, value: Any) -> float:
-        try:
-            return float(value)
-        except Exception:
-            return 0.0
+    def _daily_charges(self, props: dict, start_date: date, end_date: date):
+        rows = props.get("rows", [])
+        if not isinstance(rows, list):
+            raise ValueError("Invalid daily charges")
+        if not rows:
+            return None, None, []
+        columns = props["columns"]
+        cost_index = self._column_index(columns, "Cost")
+        if cost_index is None:
+            cost_index = self._column_index(columns, "PreTaxCost")
+        date_index = self._column_index(columns, "UsageDate")
+        currency_index = self._column_index(columns, "Currency")
+        if None in (cost_index, date_index, currency_index):
+            raise ValueError("Missing billing columns")
+        currency = None
+        charges: dict[str, float] = {}
+        for row in rows:
+            cost = float(row[cost_index])
+            usage_date = datetime.strptime(str(row[date_index]), "%Y%m%d").date()
+            row_currency = row[currency_index]
+            if (not isfinite(cost) or not start_date <= usage_date <= end_date or
+                    not isinstance(row_currency, str) or len(row_currency) != 3 or
+                    not row_currency.isascii() or not row_currency.isalpha()):
+                raise ValueError("Invalid billing row")
+            row_currency = row_currency.upper()
+            if currency is not None and currency != row_currency:
+                raise ValueError("Mixed billing currencies")
+            currency = row_currency
+            key = usage_date.isoformat()
+            charges[key] = charges.get(key, 0) + cost
+        total = sum(charges.values())
+        if not isfinite(total) or not all(map(isfinite, charges.values())):
+            raise ValueError("Cost result exceeds supported range")
+        return currency, total, [{"usage_date": key, "cost": round(value, 2)} for key, value in sorted(charges.items())]

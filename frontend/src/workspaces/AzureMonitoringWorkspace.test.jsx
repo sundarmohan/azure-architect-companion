@@ -3,24 +3,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AzureMonitoringWorkspace from "./AzureMonitoringWorkspace";
 import {
   acknowledgeAzureHealthAlert,
+  createAzureHealthIncident,
   getAzureConnectionStatus,
+  getAzureHealthIncidents,
   getAzureInventory,
   getAzureMonitoring,
   getAzureMonitoringSchedule,
   queryAzureDiagnostics,
   refreshAzureMonitoring,
   updateAzureMonitoringSchedule,
+  updateAzureHealthIncident,
 } from "../services/api";
 
 vi.mock("../services/api", () => ({
   acknowledgeAzureHealthAlert: vi.fn(),
+  createAzureHealthIncident: vi.fn(),
   getAzureConnectionStatus: vi.fn(),
+  getAzureHealthIncidents: vi.fn(),
   getAzureInventory: vi.fn(),
   getAzureMonitoring: vi.fn(),
   refreshAzureMonitoring: vi.fn(),
   getAzureMonitoringSchedule: vi.fn(),
   queryAzureDiagnostics: vi.fn(),
   updateAzureMonitoringSchedule: vi.fn(),
+  updateAzureHealthIncident: vi.fn(),
 }));
 
 const SUBSCRIPTIONS = ["sub-a", "sub-b"];
@@ -91,6 +97,34 @@ describe("Azure monitoring workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Acknowledge vm" }));
     expect(await screen.findByText(/^Acknowledged /)).toBeInTheDocument();
     expect(acknowledgeAzureHealthAlert).toHaveBeenCalledWith(SUBSCRIPTIONS[0], health_alert.evidence_id);
+  });
+
+  it("opens a human-created incident for acknowledged evidence and saves investigation details", async () => {
+    const timestamp = "2026-11-01T01:00:00Z";
+    const incident = { id: "incident", evidence_id: "a".repeat(64), resource_id: "vm-id", status: "open",
+      collected_at: timestamp, acknowledged_at: timestamp, updated_at: timestamp, health: "degraded" };
+    const health_alert = { evidence_id: incident.evidence_id, acknowledged_at: timestamp };
+    getAzureMonitoring.mockResolvedValue(snapshot("vm", {
+      resources: [{ id: "vm-id", name: "vm", health_status: "synced", health: "degraded", health_alert }],
+    }));
+    createAzureHealthIncident.mockResolvedValue(incident);
+    getAzureHealthIncidents.mockResolvedValue({ incidents: [], has_next: false });
+    updateAzureHealthIncident.mockResolvedValue({ ...incident, status: "investigating", owner: "Operations",
+      rca_note: "Reviewing evidence", updated_at: "2026-11-01T01:01:00Z" });
+    render(<AzureMonitoringWorkspace canRefresh />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create or open incident for vm" }));
+    expect(await screen.findByText("Incident recorded for the acknowledged evidence.")).toBeInTheDocument();
+    expect(createAzureHealthIncident).toHaveBeenCalledWith(SUBSCRIPTIONS[0], incident.evidence_id);
+    expect(await screen.findByText("vm-id · Open")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Incident status"), { target: { value: "investigating" } });
+    fireEvent.change(screen.getByLabelText("Incident owner"), { target: { value: "Operations" } });
+    fireEvent.change(screen.getByLabelText("Investigation and RCA note"), { target: { value: "Reviewing evidence" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save incident" }));
+    expect(await screen.findByText("Incident updated.")).toBeInTheDocument();
+    expect(updateAzureHealthIncident).toHaveBeenCalledWith(SUBSCRIPTIONS[0], incident.id, {
+      status: "investigating", owner: "Operations", rca_note: "Reviewing evidence", updated_at: timestamp,
+    });
   });
 
   it("distinguishes retained, incomplete, and unconfirmed evidence", async () => {

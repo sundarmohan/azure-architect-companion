@@ -70,6 +70,9 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         initial = client.get(monitor, headers=first_headers).json()["resources"][0]["health_alert"]
         assert initial["acknowledged_at"] is None
         alert = f"{monitor}/health-alerts/{initial['evidence_id']}/acknowledgement"
+        incident_create = f"{monitor}/health-alerts/{initial['evidence_id']}/incident"
+        incidents = f"{monitor}/health-incidents"
+        assert client.put(incident_create, headers=first_headers).status_code == 404
         assert client.put(alert, headers=second_headers).status_code == 409
         assert client.put(alert, headers=first_headers, params={"subscription_id": secondary}).status_code == 409
         saved_ack = client.put(alert, headers=first_headers)
@@ -77,6 +80,28 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert saved_ack.json()["acknowledged_at"]
         assert client.put(alert, headers=first_headers).json() == saved_ack.json()
         assert client.get(monitor, headers=first_headers).json()["resources"][0]["health_alert"] == saved_ack.json()
+        created = client.put(incident_create, headers=first_headers)
+        assert created.status_code == 200, created.text
+        incident = created.json()
+        assert incident["evidence_id"] == initial["evidence_id"]
+        assert incident["resource_id"] == resource["id"] and incident["health"] == "degraded"
+        assert incident["acknowledged_at"] == saved_ack.json()["acknowledged_at"]
+        assert client.put(incident_create, headers=first_headers).json() == incident
+        assert client.put(incident_create, headers=second_headers).status_code == 404
+        assert client.get(incidents, headers=second_headers).json() == {"incidents": [], "has_next": False}
+        assert client.get(incidents, headers=first_headers, params={"subscription_id": secondary}).json()["incidents"] == []
+        incident_path = f"{incidents}/{incident['id']}"
+        assert client.put(incident_path, headers=first_headers,
+                          json={"status": "resolved", "updated_at": incident["updated_at"]}).status_code == 422
+        investigation = {"status": "investigating", "owner": "Cloud operations", "rca_note": "Reviewing availability",
+                         "updated_at": incident["updated_at"]}
+        updated = client.put(incident_path, headers=first_headers, json=investigation)
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["owner"] == "Cloud operations"
+        assert client.put(incident_path, headers=first_headers, json=investigation).json() == updated.json()
+        assert client.put(incident_path, headers=first_headers,
+                          json={**investigation, "owner": "Stale change"}).status_code == 409
+        assert client.put(incident_path, headers=second_headers, json=investigation).status_code == 404
 
         changed = client.post(monitor + "/refresh", headers=first_headers).json()
         assert changed["resources"][0]["health_alert"]["acknowledged_at"] is None
@@ -87,6 +112,9 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.put(superseded, headers=first_headers).status_code == 409
         events = client.get("/api/audit", headers=first_headers).json()
         assert sum(event["action"] == "acknowledge_azure_health_alert" for event in events) == 1
+        assert sum(event["action"] == "create_azure_health_incident" for event in events) == 1
+        assert sum(event["action"] == "update_azure_health_incident" for event in events) == 1
+        assert client.get(incidents, headers=first_headers).json()["incidents"] == [updated.json()]
 
         details = {"status": "in_progress", "owner": "Cloud operations", "due_date": "2026-12-31"}
         assert client.put(tracking, headers=second_headers, json=details).status_code == 404
@@ -119,6 +147,9 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert client.post(monitor + "/refresh", headers=first_headers).status_code == 403
         assert client.put(tracking, headers=first_headers, json=details).status_code == 403
         assert client.put(alert, headers=first_headers).status_code == 403
+        assert client.get(incidents, headers=first_headers).json()["incidents"] == [updated.json()]
+        assert client.put(incident_create, headers=first_headers).status_code == 403
+        assert client.put(incident_path, headers=first_headers, json=investigation).status_code == 403
         assert client.put(schedule, headers=first_headers, json={"enabled": False, "interval_minutes": 5}).status_code == 403
         client.cookies.clear()
         client.cookies.set("monitorai_session", admin)

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -55,3 +55,27 @@ class AzureHealthAcknowledgement(Base):
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     actor_id: Mapped[UUID]
     acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AzureHealthIncident(Base):
+    __tablename__ = "azure_health_incidents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["client_id", "subscription_id", "evidence_id"],
+            ["azure_health_acknowledgements.client_id", "azure_health_acknowledgements.subscription_id",
+             "azure_health_acknowledgements.evidence_id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("client_id", "subscription_id", "evidence_id", name="uq_health_incident_evidence"),
+        Index("ix_health_incident_scope_created", "client_id", "subscription_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    client_id: Mapped[UUID]
+    subscription_id: Mapped[UUID]
+    evidence_id: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16))
+    owner: Mapped[str | None] = mapped_column(String(120))
+    rca_note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
