@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAzureSecurity, getComplianceReviews, saveComplianceReview } from "../services/api";
+import { getAzureSecurity, getComplianceCatalog, getComplianceReviews, saveComplianceReview } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 const THEMES = {
@@ -9,7 +9,7 @@ const THEMES = {
   recovery: { name: "Key recovery safeguards", codes: ["vault_purge_unprotected"] },
 };
 
-function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, onSaved }) {
+function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, onSaved, framework }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -23,6 +23,7 @@ function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, o
     setSaved(false);
     try {
       onSaved(await saveComplianceReview(subscription, topic, {
+        ...(framework && { applicability: optional("applicability"), outcome: optional("outcome") }),
         state: fields.get("state"),
         note: fields.get("note").trim(),
         action: optional("action"),
@@ -43,6 +44,7 @@ function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, o
     <summary>Review record · {review ? displayLabel(review.state) : "Unrecorded"}</summary>
     {review && <>
       <p>{review.note}</p>
+      {framework && <p>Applicability {displayLabel(review.applicability)} · Outcome {review.outcome ? displayLabel(review.outcome) : "None recorded"}</p>}
       <p>Updated {snapshotTime(review.updated_at)} · Azure evidence {review.evidence_at ? snapshotTime(review.evidence_at) : "Unavailable at review"}</p>
       {review.action && <>
         <p>{review.action} · {displayLabel(review.action_status)}</p>
@@ -51,6 +53,21 @@ function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, o
     </>}
     {canEdit && <form className="account-form" key={review?.updated_at} onSubmit={save}>
       <fieldset disabled={busy}>
+        {framework && <>
+          <label>Applicability<select name="applicability" defaultValue={review?.applicability || "undetermined"}>
+            <option value="undetermined">Undetermined</option>
+            <option value="applicable">Applicable</option>
+            <option value="not_applicable">Not applicable</option>
+          </select></label>
+          <label>Manual outcome<select name="outcome" defaultValue={review ? review.outcome || "" : "review_required"}>
+            <option value="">No outcome</option>
+            <option value="review_required">Review required</option>
+            <option value="unable_to_validate">Unable to validate</option>
+            <option value="pass">Pass</option>
+            <option value="fail">Fail</option>
+          </select></label>
+          <p>Use no outcome for a non-applicable item. Record the scope and rationale in Review notes.</p>
+        </>}
         <label>Review state<select name="state" defaultValue={review?.state || "in_review"}>
           <option value="in_review">In review</option>
           <option value="action_required">Action required</option>
@@ -74,9 +91,30 @@ function ReviewRecord({ topic, subscription, snapshotAttempt, review, canEdit, o
   </details>;
 }
 
+function EvidenceFindings({ findings }) {
+  return findings.length ? <>
+    <span>Review required · {findings.length} saved observations</span>
+    <details><summary>Review evidence</summary>
+      <ul>{findings.map((finding) => <li key={finding.id}>
+        <strong>{finding.title}</strong>
+        <span>{finding.resource_id}</span>
+        <p>Source <code>{finding.source}</code> · Rule <code>{finding.code}</code>{finding.observed_at && ` · Observed ${snapshotTime(finding.observed_at)}`}</p>
+        {finding.evidence?.map((item, index) => <p key={index}>{item}</p>)}
+      </li>)}</ul>
+    </details>
+  </> : <span>Unable to validate from saved findings</span>;
+}
+
+function findingsFor(snapshot, codes) {
+  return (snapshot.findings || []).filter(({ code, source }) =>
+    codes.includes(code) && ["azure_configuration", "azure_network_snapshot"].includes(source));
+}
+
 function EvidenceReview({ snapshot, subscription, canEdit }) {
   const [reviews, setReviews] = useState(null);
   const [reviewError, setReviewError] = useState("");
+  const [catalog, setCatalog] = useState(null);
+  const [catalogError, setCatalogError] = useState("");
   useEffect(() => {
     let active = true;
     getComplianceReviews(subscription).then((rows) => {
@@ -87,13 +125,23 @@ function EvidenceReview({ snapshot, subscription, canEdit }) {
     return () => { active = false; };
   }, [subscription]);
 
-  function record(topic) {
-    return reviews && <ReviewRecord topic={topic} subscription={subscription} snapshotAttempt={snapshot.last_attempt_at} review={reviews[topic]} canEdit={canEdit}
+  useEffect(() => {
+    let active = true;
+    getComplianceCatalog().then((response) => {
+      if (active) setCatalog(response);
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setCatalogError(failure.message);
+    });
+    return () => { active = false; };
+  }, []);
+
+  function record(topic, framework = false) {
+    return reviews && <ReviewRecord topic={topic} subscription={subscription} snapshotAttempt={snapshot.last_attempt_at} review={reviews[topic]} canEdit={canEdit} framework={framework}
       onSaved={(review) => setReviews((current) => ({ ...current, [topic]: review }))} />;
   }
   return <section className="card account-form">
     <h2>Technical evidence review</h2>
-    <p>Use these shared Azure evidence topics to prepare for HIPAA, SOC 2, ISO 27001, and PCI DSS review. Framework-specific control catalogs are pending.</p>
+    <p>Review shared Azure observations first, then record applicability and outcomes for selected framework references.</p>
     {!reviews && !reviewError && <p role="status">Loading review records…</p>}
     {reviewError && <p className="error" role="alert">{reviewError}</p>}
     {snapshot.status === "synced" && snapshot.last_success_at && <p>Last complete collection {snapshotTime(snapshot.last_success_at)}.</p>}
@@ -106,26 +154,32 @@ function EvidenceReview({ snapshot, subscription, canEdit }) {
     </details>}
     <ul className="design-list">
       {Object.entries(THEMES).map(([topic, { name, codes }]) => {
-        const findings = (snapshot.findings || []).filter(({ code, source }) =>
-          codes.includes(code) && ["azure_configuration", "azure_network_snapshot"].includes(source));
+        const findings = findingsFor(snapshot, codes);
         return <li key={topic}>
           <strong>{name}</strong>
-          {findings.length ? <>
-            <span>Review required · {findings.length} saved observations</span>
-            <details><summary>Review evidence</summary>
-              <ul>{findings.map((finding) => <li key={finding.id}>
-                <strong>{finding.title}</strong>
-                <span>{finding.resource_id}</span>
-                <p>Source <code>{finding.source}</code> · Rule <code>{finding.code}</code>{finding.observed_at && ` · Observed ${snapshotTime(finding.observed_at)}`}</p>
-                {finding.evidence?.map((item, index) => <p key={index}>{item}</p>)}
-              </li>)}</ul>
-            </details>
-          </> : <span>Unable to validate from saved findings</span>}
+          <EvidenceFindings findings={findings} />
           {record(topic)}
         </li>;
       })}
       <li><strong>Scope and operating procedures</strong><span>Manual review required</span>{record("scope")}</li>
     </ul>
+    <h2>Framework review catalog</h2>
+    <p>These starter entries support individual reviews. Evidence and reviewer outcomes apply to the selected subscription and entry.</p>
+    {!catalog && !catalogError && <p role="status">Loading framework catalog…</p>}
+    {catalogError && <p className="error" role="alert">{catalogError}</p>}
+    {catalog && <>
+      <p>Catalog version {catalog.version}</p>
+      <ul className="design-list">{catalog.entries.map((entry) => <li key={entry.topic}>
+        <strong>{entry.framework} · {entry.title}</strong>
+        <span>{entry.edition} · {entry.reference}</span>
+        <p>{entry.prompt}</p>
+        <a href={entry.source_url} target="_blank" rel="noreferrer">Official reference</a>
+        {entry.evidence_topic
+          ? <EvidenceFindings findings={findingsFor(snapshot, THEMES[entry.evidence_topic]?.codes || [])} />
+          : <span>Manual evidence review required</span>}
+        {record(entry.topic, true)}
+      </li>)}</ul>
+    </>}
   </section>;
 }
 

@@ -1,14 +1,16 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AssessmentWorkspace from "./AssessmentWorkspace";
-import { createAssessment, getAssessment, importAssessmentFindings, listAssessments, recordAssessmentRiskAcceptance, updateAssessmentFinding } from "../services/api";
+import { createAssessment, getAssessment, getAssessmentSlaPolicy, importAssessmentFindings, listAssessments, recordAssessmentRiskAcceptance, saveAssessmentSlaPolicy, updateAssessmentFinding } from "../services/api";
 
 vi.mock("../services/api", () => ({
   createAssessment: vi.fn(),
   getAssessment: vi.fn(),
+  getAssessmentSlaPolicy: vi.fn(),
   importAssessmentFindings: vi.fn(),
   listAssessments: vi.fn(),
   recordAssessmentRiskAcceptance: vi.fn(),
+  saveAssessmentSlaPolicy: vi.fn(),
   updateAssessmentFinding: vi.fn(),
 }));
 
@@ -48,6 +50,26 @@ beforeEach(() => {
 });
 
 describe("Assessments and Vulnerabilities workspace", () => {
+  it("lets administrators set severity deadlines and viewers read them", async () => {
+    const deadlines = { critical_days: 1, high_days: 10, medium_days: 20, low_days: 30, informational_days: 45 };
+    getAssessmentSlaPolicy.mockResolvedValue(null);
+    saveAssessmentSlaPolicy.mockResolvedValue({ ...deadlines, updated_at: "2026-11-23T11:00:00Z" });
+    const { rerender } = render(<AssessmentWorkspace canEdit canManageRisk />);
+    fireEvent.click(screen.getByRole("button", { name: "Open SLA policy" }));
+    expect(await screen.findByText("No vulnerability SLA policy is configured for this client.")).toBeInTheDocument();
+    for (const [severity, days] of Object.entries(deadlines)) {
+      const label = severity.replace("_days", "");
+      fireEvent.change(screen.getByLabelText(new RegExp(`^${label} deadline`, "i")), { target: { value: String(days) } });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Save SLA policy" }));
+    expect(await screen.findByText("Vulnerability SLA policy saved.")).toBeInTheDocument();
+    expect(saveAssessmentSlaPolicy).toHaveBeenCalledWith({ ...deadlines, updated_at: null });
+
+    rerender(<AssessmentWorkspace canEdit={false} />);
+    expect(screen.getByText("45 days")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save SLA policy" })).not.toBeInTheDocument();
+  });
+
   it("lets viewers open an assessment and access the report without mutation controls", async () => {
     render(<AssessmentWorkspace canEdit={false} />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Staging review" }));

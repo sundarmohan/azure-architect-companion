@@ -49,6 +49,28 @@ def test_compliance_reviews_are_scoped_and_viewer_read_only(monkeypatch):
         assert client.get(path, params=params, headers=foreign).json() == []
         assert client.get(path, params={"subscription_id": str(uuid4())}, headers=own).status_code == 404
 
+        catalog = client.get("/api/compliance/catalog", headers=own).json()
+        assert catalog["version"] == 1
+        assert {entry["framework"] for entry in catalog["entries"]} == {"HIPAA", "SOC 2", "ISO/IEC 27001", "PCI DSS"}
+        framework = f"{path}/hipaa_transport_v1"
+        assert client.put(framework, params=params, headers=own, json={
+            **payload, "applicability": "undetermined", "outcome": "pass",
+        }).status_code == 422
+        assert client.put(framework, params=params, headers=own, json={
+            **payload, "applicability": "not_applicable", "outcome": "fail",
+        }).status_code == 422
+        assert client.put(f"{path}/transport", params=params, headers=own, json={
+            **payload, "applicability": "applicable", "outcome": "unable_to_validate",
+        }).status_code == 422
+        saved_framework = client.put(framework, params=params, headers=own, json={
+            **payload, "applicability": "applicable", "outcome": "unable_to_validate",
+        })
+        assert saved_framework.status_code == 200, saved_framework.text
+        framework_row = saved_framework.json()
+        assert framework_row["applicability"] == "applicable"
+        assert framework_row["outcome"] == "unable_to_validate"
+        assert client.get(path, params=params, headers=own).json() == [framework_row, row]
+        assert client.get(path, params=params, headers=foreign).json() == []
         username = f"compliance-viewer-{uuid4().hex}"
         assert client.post("/api/auth/users", headers=WRITE,
                            json={"username": username, "password": PASSWORD}).status_code == 201
@@ -57,6 +79,6 @@ def test_compliance_reviews_are_scoped_and_viewer_read_only(monkeypatch):
         client.cookies.clear()
         assert client.post("/api/auth/login", headers=WRITE,
                            json={"username": username, "password": PASSWORD}).status_code == 200
-        assert client.get(path, params=params, headers=own).json() == [row]
+        assert client.get(path, params=params, headers=own).json() == [framework_row, row]
         assert client.get(path, params=params, headers=foreign).status_code == 403
         assert client.put(f"{path}/transport", params=params, headers=own, json=payload).status_code == 403

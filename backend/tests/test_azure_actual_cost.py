@@ -6,7 +6,7 @@ import httpx
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
-from app.domains.cost import azure_cost_management_adapter as adapter_module
+from app.domains.cost import actual_routes, advisor, azure_cost_management_adapter as adapter_module
 from app.main import app
 from tests.test_local_access import PASSWORD, WRITE
 
@@ -18,6 +18,7 @@ def test_actual_cost_is_subscription_scoped_and_bounded(monkeypatch):
     monkeypatch.setenv("MONITORAI_AZURE_ENCRYPTION_KEY", Fernet.generate_key().decode())
     subscription, other = str(uuid4()), str(uuid4())
     calls = []
+    advisor_calls = []
 
     async def fake_cost(self, *, credentials, subscription_id, start_date, end_date):
         calls.append(subscription_id)
@@ -27,6 +28,13 @@ def test_actual_cost_is_subscription_scoped_and_bounded(monkeypatch):
                 "daily": [{"usage_date": "2026-01-01", "cost": 9}]}
 
     monkeypatch.setattr(adapter_module.AzureCostManagementAdapter, "get_actual_cost", fake_cost)
+
+    async def fake_advisor(selected, credentials):
+        advisor_calls.append(selected)
+        assert credentials["client_secret"] == "cost-test"
+        return advisor.AdvisorCostRead(subscription_id=selected, status="synced")
+
+    monkeypatch.setattr(actual_routes, "read_advisor_cost", fake_advisor)
     path = "/api/azure/cost/actual"
     dates = {"start_date": "2026-01-01", "end_date": "2026-01-31"}
     with TestClient(app, base_url="https://testserver") as client:
@@ -50,6 +58,12 @@ def test_actual_cost_is_subscription_scoped_and_bounded(monkeypatch):
         assert result.json()["subscription_id"] == subscription
         assert "cost-test" not in result.text
         assert calls == [subscription]
+        advisor_path = "/api/azure/cost/recommendations"
+        assert client.get(advisor_path, headers=headers, params={"subscription_id": other}).status_code == 404
+        recommendations = client.get(advisor_path, headers=headers, params={"subscription_id": subscription})
+        assert recommendations.status_code == 200
+        assert recommendations.json()["recommendations"] == []
+        assert advisor_calls == [subscription]
 
         path = "/api/azure/cost/budget"
         scope = {"subscription_id": subscription}
@@ -115,3 +129,63 @@ def test_billed_result_parsing_does_not_mix_currencies_or_silent_partial_pages(m
     assert not asyncio.run(adapter.get_actual_cost(**kwargs))["available"]
     properties["nextLink"] = "https://example.invalid"
     assert "partial" in asyncio.run(adapter.get_actual_cost(**kwargs))["error"]
+
+
+def test_advisor_read_only_list_projects_bounded_cost_evidence(monkeypatch):
+    subscription, other = str(uuid4()), str(uuid4())
+    scope = f"/subscriptions/{subscription}"
+    resource = scope + "/resourceGroups/sample/providers/Microsoft.Compute/virtualMachines/one"
+    good = {
+        "id": resource + "/providers/Microsoft.Advisor/recommendations/review",
+        "properties": {
+            "category": "Cost",
+            "resourceMetadata": {"resourceId": resource},
+            "shortDescription": {"problem": "Underused resource", "solution": "Review its size"},
+            "actions": [{"link": "https://example.invalid/change"}],
+        },
+    }
+    payload = {
+        "value": [
+            good,
+            good,
+            {**good, "id": good["id"].replace(subscription, other)},
+            {**good, "properties": {**good["properties"], "resourceMetadata": {"resourceId": f"/subscriptions/{other}"}}},
+            {**good, "properties": {**good["properties"], "category": "Security"}},
+        ],
+        "nextLink": "https://example.invalid/ignored",
+    }
+
+    class Credential:
+        def __init__(self, **kwargs):
+            assert kwargs == {"tenant_id": "tenant", "client_id": "client", "client_secret": "scoped"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def get_token(self, scope_name):
+            assert scope_name == "https://management.azure.com/.default"
+            return type("Token", (), {"token": "placeholder"})()
+
+    calls = []
+
+    async def fake_request(http, semaphore, url, params, headers):
+        calls.append(url)
+        assert url == f"https://management.azure.com{scope}/providers/Microsoft.Advisor/recommendations"
+        assert params == {"api-version": "2025-01-01", "$filter": "Category eq 'Cost'", "$top": 25}
+        assert headers == {"Authorization": "Bearer placeholder"}
+        return "synced", payload
+
+    monkeypatch.setattr(advisor, "ClientSecretCredential", Credential)
+    monkeypatch.setattr(advisor, "request_json", fake_request)
+    result = asyncio.run(advisor.read_advisor_cost(
+        subscription, {"tenant_id": "tenant", "client_id": "client", "client_secret": "scoped"},
+    ))
+    assert len(calls) == 1
+    assert result.status == "partial_failure" and result.truncated
+    assert [(item.id, item.resource_id, item.recommendation) for item in result.recommendations] == [
+        (good["id"], resource, "Review its size"),
+    ]
+    assert "example.invalid" not in result.model_dump_json()

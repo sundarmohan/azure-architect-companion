@@ -11,9 +11,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.access.routes import audit, client_access, client_admin, get_db
-from .models import Assessment, AssessmentFinding, FindingEvent, FindingRiskAcceptance
+from .models import Assessment, AssessmentFinding, FindingEvent, FindingRiskAcceptance, VulnerabilitySlaPolicy
+from .sla import FindingSlaRead, finding_sla
+from .sla import router as sla_router
 
 router = APIRouter()
+router.include_router(sla_router)
 Severity = Literal["critical", "high", "medium", "low", "informational"]
 FindingStatus = Literal["open", "confirmed", "in_remediation", "ready_for_retest", "closed"]
 TRANSITIONS = {
@@ -108,6 +111,7 @@ class FindingRead(FindingImport, TrackingWrite):
     created_at: AwareDatetime
     history: list[EventRead] = Field(default_factory=list)
     risk_acceptance: RiskAcceptanceRead | None = None
+    sla: FindingSlaRead | None = None
 
 
 class AssessmentDetail(AssessmentRead):
@@ -126,6 +130,7 @@ class PortfolioFinding(BaseModel):
     owner: str | None
     due_date: date | None
     observed_at: AwareDatetime | None
+    sla: FindingSlaRead | None = None
 
 
 class PortfolioPage(BaseModel):
@@ -174,7 +179,7 @@ async def list_portfolio(page: int = Query(default=1, ge=1, le=1000),
     query = (
         select(finding.id, finding.assessment_id, Assessment.name.label("assessment_name"),
                finding.title, finding.severity, finding.source, finding.evidence,
-               finding.status, finding.owner, finding.due_date, finding.observed_at)
+               finding.status, finding.owner, finding.due_date, finding.observed_at, finding.created_at)
         .join(Assessment, finding.assessment_id == Assessment.id)
         .where(Assessment.client_id == client_id)
         .order_by(severity, finding.created_at.desc(), finding.id)
@@ -182,8 +187,12 @@ async def list_portfolio(page: int = Query(default=1, ge=1, le=1000),
         .limit(page_size + 1)
     )
     rows = (await db.execute(query)).mappings().all()
-    return PortfolioPage(findings=[PortfolioFinding.model_validate(row) for row in rows[:page_size]],
-                         has_next=page < 1000 and len(rows) > page_size)
+    policy = await db.get(VulnerabilitySlaPolicy, client_id) if rows else None
+    today = datetime.now(timezone.utc).date()
+    return PortfolioPage(findings=[
+        PortfolioFinding.model_validate(row).model_copy(update={"sla": finding_sla(row, policy, today)})
+        for row in rows[:page_size]
+    ], has_next=page < 1000 and len(rows) > page_size)
 
 
 @router.get("/{assessment_id}", response_model=AssessmentDetail)
@@ -194,6 +203,8 @@ async def assessment_detail(assessment_id: UUID, client_id: UUID = Depends(clien
                                  .order_by(AssessmentFinding.created_at.desc(), AssessmentFinding.id))).all()
     history = {}
     risk_acceptances = {}
+    policy = await db.get(VulnerabilitySlaPolicy, client_id) if findings else None
+    today = datetime.now(timezone.utc).date()
     if findings:
         for event in await db.scalars(select(FindingEvent).join(AssessmentFinding).where(
             AssessmentFinding.assessment_id == item.id
@@ -206,6 +217,7 @@ async def assessment_detail(assessment_id: UUID, client_id: UUID = Depends(clien
     return AssessmentDetail(**AssessmentRead.model_validate(item).model_dump(), findings=[
         FindingRead.model_validate(finding).model_copy(update={
             "history": history.get(finding.id, []), "risk_acceptance": risk_acceptances.get(finding.id),
+            "sla": finding_sla(finding, policy, today),
         })
         for finding in findings
     ])
@@ -282,8 +294,10 @@ async def track_finding(assessment_id: UUID, finding_id: UUID, payload: Tracking
         setattr(item, key, value or None if key in {"owner", "retest_note"} else value)
     audit(db, "track_security_assessment_finding", request.state.account, client_id, str(finding_id))
     decision = await db.scalar(latest_risk_acceptances().where(FindingRiskAcceptance.finding_id == finding_id).limit(1))
+    policy = await db.get(VulnerabilitySlaPolicy, client_id)
     result = FindingRead.model_validate(item).model_copy(update={
         "risk_acceptance": RiskAcceptanceRead.model_validate(decision) if decision else None,
+        "sla": finding_sla(item, policy, datetime.now(timezone.utc).date()),
     })
     await db.commit()
     return result

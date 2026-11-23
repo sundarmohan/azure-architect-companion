@@ -1,12 +1,14 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { getAzureActualCost, getAzureConnectionStatus, getAzureCostBudget, saveAzureCostBudget } from "../services/api";
+import { getAzureActualCost, getAzureConnectionStatus, getAzureCostBudget, getAzureCostRecommendations,
+  saveAzureCostBudget } from "../services/api";
 import AzureActualCostWorkspace from "./AzureActualCostWorkspace";
 
 vi.mock("../services/api", () => ({
   getAzureActualCost: vi.fn(),
   getAzureConnectionStatus: vi.fn(),
   getAzureCostBudget: vi.fn(),
+  getAzureCostRecommendations: vi.fn(),
   saveAzureCostBudget: vi.fn(),
 }));
 
@@ -79,4 +81,28 @@ it("flags a threshold increase with a complete baseline and resets after an unre
   expect(anomalies.queryByText("2026-01-10")).not.toBeInTheDocument();
   expect(screen.getByText("Missing charge dates in the selected range: 1.")).toBeInTheDocument();
   expect(screen.getByText("Compared 1 day. Review the flagged increases.")).toBeInTheDocument();
+});
+
+it("distinguishes an empty cost recommendation response from Azure permissions and resets subscription scope", async () => {
+  getAzureConnectionStatus.mockResolvedValue({ configured_subscription_ids: ["sub-a", "sub-b"] });
+  getAzureCostRecommendations.mockResolvedValueOnce({
+    status: "synced", recommendations: [],
+  }).mockResolvedValueOnce({
+    status: "permission_failure", recommendations: [],
+  }).mockResolvedValueOnce({
+    status: "synced", truncated: true,
+    recommendations: [{ id: "review-1", recommendation: "Review the resource size", impact: "high" }],
+  });
+  render(<AzureActualCostWorkspace />);
+  const load = await screen.findByRole("button", { name: "Load cost recommendations" });
+  fireEvent.click(load);
+  expect(await screen.findByText("Azure Advisor returned no cost recommendations.")).toBeInTheDocument();
+  fireEvent.click(load);
+  expect(await screen.findByText("The Azure connection lacks permission to read Advisor recommendations.")).toBeInTheDocument();
+  expect(screen.queryByText("Azure Advisor returned no cost recommendations.")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Subscription"), { target: { value: "sub-b" } });
+  fireEvent.click(screen.getByRole("button", { name: "Load cost recommendations" }));
+  expect(await screen.findByText("Review the resource size")).toBeInTheDocument();
+  expect(screen.getByText(/Recommendation coverage is limited/)).toBeInTheDocument();
+  expect(getAzureCostRecommendations.mock.calls.map(([id]) => id)).toEqual(["sub-a", "sub-a", "sub-b"]);
 });

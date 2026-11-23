@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -17,8 +18,10 @@ def test_github_pipeline_is_scoped_and_returns_only_selected_metadata(monkeypatc
     monkeypatch.setenv("MONITORAI_BOOTSTRAP_PASSWORD", PASSWORD)
     calls = []
 
-    async def saved_runs(owner, repository):
-        calls.append((owner, repository))
+    monkeypatch.setenv("MONITORAI_AZURE_ENCRYPTION_KEY", Fernet.generate_key().decode())
+
+    async def saved_runs(owner, repository, token=None):
+        calls.append((owner, repository, token))
         return {"total_count": 1, "workflow_runs": [{
             "id": 111, "name": "Build", "head_branch": "main", "head_sha": "a" * 40,
             "event": "push", "status": "completed", "conclusion": "success",
@@ -45,7 +48,22 @@ def test_github_pipeline_is_scoped_and_returns_only_selected_metadata(monkeypatc
         assert evidence["repository"] == "octocat/hello-world"
         assert evidence["runs"][0]["conclusion"] == "success"
         assert "logs_url" not in evidence["runs"][0]
-        assert calls == [("octocat", "hello-world")]
+        assert calls == [("octocat", "hello-world", None)]
+        connection = "/api/devsecops/github/connection"
+        token = "fixture_repository_token_0000"
+        configured = client.put(connection, headers=headers, json={**params, "token": token})
+        assert configured.status_code == 200, configured.text
+        assert configured.json() == params
+        assert client.get(connection, headers=headers).json() == params
+        assert client.get(path, headers=headers, params=params).status_code == 200
+        assert calls[-1] == ("octocat", "hello-world", token)
+        other = client.post("/api/auth/clients", headers=WRITE, json={"name": str(uuid4())}).json()["client_id"]
+        assert client.get(path, headers={**WRITE, "X-Client-ID": other}, params=params).status_code == 200
+        assert calls[-1] == ("octocat", "hello-world", None)
+        assert client.get(path, headers=headers, params={**params, "repository": "different"}).status_code == 200
+        assert calls[-1] == ("octocat", "different", None)
+        assert client.delete(connection, headers=headers).status_code == 204
+        assert client.get(connection, headers=headers).json() is None
 
 
 @pytest.mark.parametrize(("upstream", "headers", "expected"), [

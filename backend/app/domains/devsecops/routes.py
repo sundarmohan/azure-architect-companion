@@ -5,15 +5,23 @@ from typing import Annotated
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import AwareDatetime, BaseModel, Field
+from cryptography.fernet import InvalidToken
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import AwareDatetime, BaseModel, Field, SecretStr
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.access.routes import client_access
+from app.domains.access.azure import cipher
+from app.domains.access.routes import audit, client_access, client_admin, current_account, get_db
+from .models import GitHubConnection
 
 router = APIRouter()
 API_ROOT = "https://api.github.com"
 RUN_LIMIT = 20
 RESPONSE_LIMIT = 1024 * 1024
+OWNER_PATTERN = r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$"
+REPOSITORY_PATTERN = r"^[a-zA-Z0-9_.-]+$"
 
 
 class WorkflowRun(BaseModel):
@@ -34,18 +42,68 @@ class PipelineRead(BaseModel):
     collected_at: AwareDatetime
 
 
-async def read_public_runs(owner, repository):
+class ConnectionRead(BaseModel):
+    owner: str
+    repository: str
+
+
+class ConnectionWrite(ConnectionRead):
+    owner: str = Field(pattern=OWNER_PATTERN)
+    repository: str = Field(min_length=1, max_length=100, pattern=REPOSITORY_PATTERN)
+    token: SecretStr = Field(min_length=20, max_length=512)
+
+
+def connection_data(row):
+    return ConnectionRead(owner=row.owner, repository=row.repository) if row else None
+
+
+@router.get("/github/connection", response_model=ConnectionRead | None)
+async def get_connection(client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    return connection_data(await db.get(GitHubConnection, client_id))
+
+
+@router.put("/github/connection", response_model=ConnectionRead)
+async def save_connection(payload: ConnectionWrite, request: Request,
+                          client_id: UUID = Depends(client_admin), db: AsyncSession = Depends(get_db)):
+    token = payload.token.get_secret_value()
+    if payload.repository in {".", ".."} or not token.isascii() or not all(
+        char.isalnum() or char in "_-" for char in token
+    ):
+        raise HTTPException(422, "Provide a valid repository and access token.")
+    owner, repository = payload.owner.lower(), payload.repository.lower()
+    binding = f"{client_id}/{owner}/{repository}/"
+    encrypted = cipher().encrypt(f"{binding}{token}".encode()).decode()
+    values = {"owner": owner, "repository": repository, "ciphertext": encrypted}
+    await db.execute(insert(GitHubConnection).values(client_id=client_id, **values).on_conflict_do_update(
+        index_elements=[GitHubConnection.client_id], set_=values,
+    ))
+    audit(db, "save_github_connection", request.state.account, client_id, f"{owner}/{repository}")
+    await db.commit()
+    return ConnectionRead(owner=owner, repository=repository)
+
+
+@router.delete("/github/connection", status_code=204)
+async def clear_connection(request: Request, client_id: UUID = Depends(client_admin),
+                           db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(GitHubConnection).where(GitHubConnection.client_id == client_id))
+    audit(db, "clear_github_connection", request.state.account, client_id)
+    await db.commit()
+
+
+async def read_public_runs(owner, repository, token=None):
     url = f"{API_ROOT}/repos/{owner}/{repository}/actions/runs"
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     async with asyncio.timeout(12), httpx.AsyncClient(timeout=8, follow_redirects=False, trust_env=False) as client:
         async with client.stream("GET", url, params={"per_page": RUN_LIMIT}, headers=headers) as response:
             if response.status_code == 429 or (response.status_code == 403 and (
                 response.headers.get("x-ratelimit-remaining") == "0" or response.headers.get("retry-after")
             )):
-                raise HTTPException(429, "GitHub's public API rate limit was reached. Try again later.")
+                raise HTTPException(429, "GitHub's API rate limit was reached. Try again later.")
             if response.status_code == 404:
-                raise HTTPException(404, "Public repository or workflow runs were not found.")
-            if response.status_code == 403:
+                raise HTTPException(404, "Repository or workflow runs were not accessible.")
+            if response.status_code in {401, 403}:
                 raise HTTPException(403, "GitHub denied access to these workflow runs.")
             if response.status_code != 200:
                 raise HTTPException(502, "GitHub did not return workflow evidence.")
@@ -59,14 +117,30 @@ async def read_public_runs(owner, repository):
 
 @router.get("/github/runs", response_model=PipelineRead)
 async def github_runs(
-    owner: Annotated[str, Query(pattern=r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$")],
-    repository: Annotated[str, Query(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$")],
-    _client_id: UUID = Depends(client_access),
+    owner: Annotated[str, Query(pattern=OWNER_PATTERN)],
+    repository: Annotated[str, Query(min_length=1, max_length=100, pattern=REPOSITORY_PATTERN)],
+    request: Request,
+    client_id: UUID = Depends(client_access),
+    db: AsyncSession = Depends(get_db),
 ):
     if repository in {".", ".."}:
         raise HTTPException(422, "Provide a repository name.")
+    connection = await db.get(GitHubConnection, client_id)
+    ciphertext = None
+    token = None
+    if connection and (connection.owner, connection.repository) == (owner.lower(), repository.lower()):
+        ciphertext = connection.ciphertext
+        binding = f"{client_id}/{connection.owner}/{connection.repository}/"
+        try:
+            plaintext = cipher().decrypt(ciphertext.encode()).decode()
+        except (InvalidToken, UnicodeError):
+            raise HTTPException(503, "GitHub credentials are unavailable.") from None
+        if not plaintext.startswith(binding):
+            raise HTTPException(503, "GitHub credentials are unavailable.")
+        token = plaintext[len(binding):]
+    await db.rollback()
     try:
-        payload = await read_public_runs(owner, repository)
+        payload = await read_public_runs(owner, repository, token) if token else await read_public_runs(owner, repository)
         if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
             raise ValueError("Unexpected workflow data")
         total = payload.get("total_count")
@@ -77,6 +151,11 @@ async def github_runs(
         raise HTTPException(504, "GitHub did not respond in time.") from None
     except (httpx.HTTPError, ValueError):
         raise HTTPException(502, "GitHub workflow evidence could not be read.") from None
+    if ciphertext:
+        await client_access(request, db, await current_account(request, db))
+        current = await db.scalar(select(GitHubConnection.ciphertext).where(GitHubConnection.client_id == client_id))
+        if current != ciphertext:
+            raise HTTPException(409, "The GitHub connection changed. Reload the workflow evidence.")
     for run in runs:
         if run.name:
             run.name = run.name[:180]

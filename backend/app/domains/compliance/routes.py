@@ -13,15 +13,18 @@ from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, get_db
 from app.domains.monitoring.observation_models import AzureObservation
 
+from .catalog import FRAMEWORK_CATALOG, FRAMEWORK_TOPICS
 from .models import ComplianceReview
 
 router = APIRouter()
-Topic = Literal["transport", "storage", "network", "recovery", "scope"]
+NEUTRAL_TOPICS = {"transport", "storage", "network", "recovery", "scope"}
 
 
 class ReviewWrite(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
+    applicability: Literal["undetermined", "applicable", "not_applicable"] | None = None
+    outcome: Literal["review_required", "unable_to_validate", "pass", "fail"] | None = None
     state: Literal["in_review", "action_required", "reviewed"]
     note: str = Field(min_length=1, max_length=2000)
     action: str | None = Field(default=None, min_length=1, max_length=1200)
@@ -47,9 +50,14 @@ class ReviewSubmission(ReviewWrite):
 class ReviewRead(ReviewWrite):
     model_config = ConfigDict(from_attributes=True)
 
-    topic: Topic
+    topic: str
     evidence_at: AwareDatetime | None
     updated_at: AwareDatetime
+
+
+@router.get("/catalog")
+async def read_catalog(_client_id: UUID = Depends(client_access)):
+    return {"version": 1, "entries": FRAMEWORK_CATALOG}
 
 
 @router.get("/reviews", response_model=list[ReviewRead])
@@ -64,8 +72,21 @@ async def read_reviews(subscription_id: UUID, client_id: UUID = Depends(client_a
 
 
 @router.put("/reviews/{topic}", response_model=ReviewRead)
-async def save_review(topic: Topic, subscription_id: UUID, payload: ReviewSubmission, request: Request,
+async def save_review(topic: str, subscription_id: UUID, payload: ReviewSubmission, request: Request,
                       client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
+    if topic not in NEUTRAL_TOPICS and topic not in FRAMEWORK_TOPICS:
+        raise HTTPException(404, "Review topic not found")
+    applicability, outcome = payload.applicability, payload.outcome
+    if topic in FRAMEWORK_TOPICS:
+        if applicability is None:
+            raise HTTPException(422, "Record the framework review applicability")
+        if applicability == "not_applicable":
+            if outcome is not None:
+                raise HTTPException(422, "Leave the outcome blank for a non-applicable review")
+        elif outcome is None or (applicability == "undetermined" and outcome in {"pass", "fail"}):
+            raise HTTPException(422, "Choose a review outcome consistent with applicability")
+    elif applicability is not None or outcome is not None:
+        raise HTTPException(422, "Applicability and outcomes belong to framework review records")
     connection = await db.scalar(select(AzureConnection).where(
         AzureConnection.client_id == client_id,
     ).with_for_update())

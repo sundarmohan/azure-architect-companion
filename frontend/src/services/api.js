@@ -156,6 +156,11 @@ export const getComplianceReviews=id=>fetchRequest(`/compliance/reviews${subscri
 export const saveComplianceReview=(id,topic,data)=>request(`/compliance/reviews/${encodeURIComponent(topic)}${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
 export const getDevSecOpsFindings=page=>fetchRequest(`/devsecops/findings?${new URLSearchParams({page})}`);
 export const importDevSecOpsFindings=data=>request("/devsecops/findings/import",{method:"POST",body:JSON.stringify(data)});
+export const getGitHubConnection=()=>fetchRequest("/devsecops/github/connection");
+export const saveGitHubConnection=data=>request("/devsecops/github/connection",{method:"PUT",body:JSON.stringify(data)});
+export const clearGitHubConnection=()=>request("/devsecops/github/connection",{method:"DELETE"});
+export const getAzureCostRecommendations=id=>fetchRequest(`/azure/cost/recommendations${subscriptionQuery(id)}`);
+export const getComplianceCatalog=()=>fetchRequest("/compliance/catalog");
 export const getGitHubPipeline=(owner,repository)=>fetchRequest(`/devsecops/github/runs?${new URLSearchParams({owner,repository})}`);
 export const getAzureInventory=id=>fetchRequest(`/azure/inventory${subscriptionQuery(id)}`);
 export const refreshAzureInventory=id=>request(`/azure/inventory/refresh${subscriptionQuery(id)}`,{method:"POST"});
@@ -200,6 +205,8 @@ export const listAssessments=()=>fetchRequest("/assessments");
 export const getAssessmentPortfolio=page=>fetchRequest(`/assessments/portfolio?page=${page}`);
 export const createAssessment=data=>request("/assessments",{method:"POST",body:JSON.stringify(data)});
 export const getAssessment=id=>fetchRequest(`/assessments/${encodeURIComponent(id)}`);
+export const getAssessmentSlaPolicy=()=>fetchRequest("/assessments/sla-policy");
+export const saveAssessmentSlaPolicy=data=>request("/assessments/sla-policy",{method:"PUT",body:JSON.stringify(data)});
 export const recordAssessmentRiskAcceptance=(assessmentId,findingId,data)=>request(
  `/assessments/${encodeURIComponent(assessmentId)}/findings/${encodeURIComponent(findingId)}/risk-acceptance`,
  {method:"PUT",body:JSON.stringify(data)},

@@ -1,14 +1,17 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
-import { getAzureConnectionStatus, getAzureSecurity, getComplianceReviews, saveComplianceReview } from "../services/api";
+import { beforeEach, expect, it, vi } from "vitest";
+import { getAzureConnectionStatus, getAzureSecurity, getComplianceCatalog, getComplianceReviews, saveComplianceReview } from "../services/api";
 import ComplianceWorkspace from "./ComplianceWorkspace";
 
 vi.mock("../services/api", () => ({
   getAzureConnectionStatus: vi.fn(),
   getAzureSecurity: vi.fn(),
+  getComplianceCatalog: vi.fn(),
   getComplianceReviews: vi.fn(),
   saveComplianceReview: vi.fn(),
 }));
+
+beforeEach(() => getComplianceCatalog.mockResolvedValue({ version: 1, entries: [] }));
 
 it("uses configured subscription evidence and treats missing matches as unverified", async () => {
   getComplianceReviews.mockResolvedValue([]);
@@ -65,4 +68,33 @@ it("saves a scoped manual review and corrective action", async () => {
   expect(await row.findByText("Review saved.")).toBeInTheDocument();
   expect(saveComplianceReview).toHaveBeenCalledWith("sub-a", "transport", { ...payload, snapshot_attempt_at: null });
   expect(row.getByText(/Unavailable at review/)).toBeInTheDocument();
+});
+
+it("shows versioned references and saves a manual framework outcome", async () => {
+  getAzureConnectionStatus.mockResolvedValue({ configured_subscription_ids: ["sub-a"] });
+  getAzureSecurity.mockResolvedValue({ status: "not_synced", findings: [] });
+  getComplianceReviews.mockResolvedValue([]);
+  getComplianceCatalog.mockResolvedValue({ version: 1, entries: [{
+    topic: "hipaa_transport_v1", framework: "HIPAA", edition: "Security Rule",
+    reference: "45 CFR 164.312(e)(1)", title: "Data in transit", prompt: "Review transmission scope.",
+    source_url: "https://www.hhs.gov/", evidence_topic: "transport",
+  }] });
+  const payload = {
+    state: "in_review", applicability: "applicable", outcome: "unable_to_validate",
+    note: "Provider evidence requires review.", action: null, owner: null, action_status: null, due_date: null,
+  };
+  saveComplianceReview.mockResolvedValue({
+    ...payload, topic: "hipaa_transport_v1", evidence_at: null, updated_at: "2026-11-01T00:00:00Z",
+  });
+  render(<ComplianceWorkspace canEdit />);
+  const entry = (await screen.findByText("HIPAA · Data in transit")).closest("li");
+  const fields = within(entry);
+  expect(fields.getByRole("link", { name: "Official reference" })).toHaveAttribute("href", "https://www.hhs.gov/");
+  fireEvent.click(await fields.findByText("Review record · Unrecorded"));
+  fireEvent.change(fields.getByLabelText("Applicability"), { target: { value: "applicable" } });
+  fireEvent.change(fields.getByLabelText("Manual outcome"), { target: { value: "unable_to_validate" } });
+  fireEvent.change(fields.getByLabelText("Review notes"), { target: { value: payload.note } });
+  fireEvent.click(fields.getByRole("button", { name: "Save review" }));
+  expect(await fields.findByText("Review saved.")).toBeInTheDocument();
+  expect(saveComplianceReview).toHaveBeenLastCalledWith("sub-a", "hipaa_transport_v1", { ...payload, snapshot_attempt_at: null });
 });

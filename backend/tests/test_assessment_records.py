@@ -1,9 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app.domains.assessments.routes import RiskAcceptanceRead
+from app.domains.assessments.sla import finding_sla
 from app.main import app
 from tests.test_local_access import PASSWORD, WRITE
 
@@ -47,6 +49,19 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
             "findings": [{**row, "severity": "critical", "title": "Priority finding"}],
         }).status_code == 200
         assert client.get(PATH + "/portfolio", headers=foreign).json() == {"findings": [], "has_next": False}
+        policy_path = PATH + "/sla-policy"
+        policy = {"critical_days": 1, "high_days": 10, "medium_days": 30, "low_days": 60, "informational_days": 90}
+        assert client.get(policy_path, headers=own).json() is None
+        assert client.put(policy_path, headers=own, json={**policy, "critical_days": 0}).status_code == 422
+        saved_policy_response = client.put(policy_path, headers=own, json=policy)
+        assert saved_policy_response.status_code == 200, saved_policy_response.text
+        saved_policy = saved_policy_response.json()
+        assert client.put(policy_path, headers=own, json=policy).json() == saved_policy
+        assert client.put(policy_path, headers=own, json={**policy, "high_days": 20}).status_code == 409
+        assert client.get(policy_path, headers=foreign).json() is None
+        sla = client.get(assessment, headers=own).json()["findings"][0]["sla"]
+        assert sla["age_source"] == "observed" and sla["deadline_source"] == "policy"
+        assert sla["deadline"] == "2026-01-11"
         finding = f"{assessment}/findings/{client.get(assessment, headers=own).json()['findings'][0]['id']}"
         risk = finding + "/risk-acceptance"
         today = datetime.now(timezone.utc).date()
@@ -69,6 +84,7 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         assert current["status"] == "open" and current["risk_acceptance"] == updated_decision
         events = client.get("/api/audit", headers=own).json()
         assert sum(event["action"] == "record_vulnerability_risk_acceptance" for event in events) == 2
+        assert sum(event["action"] == "update_vulnerability_sla_policy" for event in events) == 1
         assert client.put(finding, headers=own, json={"status": "closed"}).status_code == 409
         for status in ("confirmed", "in_remediation", "ready_for_retest"):
             assert client.put(finding, headers=own, json={"status": status}).status_code == 200
@@ -77,6 +93,8 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
                                                        "owner": "Operations", "due_date": "2026-02-01"})
         assert closed.status_code == 200 and closed.json()["retest_note"] == "Human retest passed"
         assert closed.json()["risk_acceptance"] == updated_decision
+        assert closed.json()["sla"]["deadline"] == "2026-02-01"
+        assert closed.json()["sla"]["deadline_source"] == "manual" and closed.json()["sla"]["status"] == "closed"
         assert client.put(risk, headers=own, json={**decision, "previous_id": updated_decision["id"]}).status_code == 409
         history = client.get(assessment, headers=own).json()["findings"][0]["history"]
         assert [event["status"] for event in history] == ["confirmed", "in_remediation", "ready_for_retest", "closed"]
@@ -90,6 +108,8 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         assert client.get(assessment, headers=own).status_code == 200
         assert client.get(assessment, headers=own).json()["findings"][0]["risk_acceptance"] == updated_decision
         assert client.put(risk, headers=own, json=decision).status_code == 403
+        assert client.get(policy_path, headers=own).json() == saved_policy
+        assert client.put(policy_path, headers=own, json=policy).status_code == 403
         portfolio = client.get(PATH + "/portfolio", headers=own)
         assert portfolio.status_code == 200, portfolio.text
         data = portfolio.json()
@@ -99,6 +119,7 @@ def test_assessment_scope_import_and_retest_lifecycle(monkeypatch):
         assert data["findings"][1]["status"] == "closed"
         assert data["findings"][1]["owner"] == "Operations"
         assert data["findings"][1]["due_date"] == "2026-02-01"
+        assert data["findings"][1]["sla"] == closed.json()["sla"]
         assert client.get(PATH + "/portfolio", headers=foreign).status_code == 403
         assert client.post(PATH, headers=own, json=details).status_code == 403
         assert client.put(finding, headers=own, json={"status": "open"}).status_code == 403
@@ -109,3 +130,16 @@ def test_risk_acceptance_flags_utc_expiry():
     decision = RiskAcceptanceRead(id=uuid4(), rationale="Reviewed", expires_on=now.date(),
                                   actor_username="reviewer", created_at=now - timedelta(days=1))
     assert decision.model_dump()["active"] is False
+
+
+def test_sla_uses_import_date_when_observation_is_missing_and_manual_override_first():
+    today = date(2026, 1, 11)
+    finding = SimpleNamespace(created_at=datetime(2026, 1, 1, tzinfo=timezone.utc), observed_at=None,
+                              due_date=None, severity="high", status="open")
+    policy = SimpleNamespace(high_days=10)
+    sla = finding_sla(finding, policy, today)
+    assert sla.age_days == 10 and sla.age_source == "imported"
+    assert sla.status == "due_today"
+    finding.due_date = date(2026, 1, 10)
+    manual = finding_sla(finding, policy, today)
+    assert manual.status == "overdue" and manual.deadline_source == "manual"

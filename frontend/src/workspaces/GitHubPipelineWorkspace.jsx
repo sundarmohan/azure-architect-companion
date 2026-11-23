@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { getGitHubPipeline } from "../services/api";
 import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
+import GitHubConnectionSettings from "./GitHubConnectionSettings";
 import RepositoryFindings from "./RepositoryFindings";
 
-export default function GitHubPipelineWorkspace({ canEdit = false }) {
+export default function GitHubPipelineWorkspace({ canEdit = false, canManageConnection = false }) {
+  const [showConnection, setShowConnection] = useState(false);
+  const [configured, setConfigured] = useState(null);
   const [showFindings, setShowFindings] = useState(false);
   const [busy, setBusy] = useState(false);
   const [evidence, setEvidence] = useState(null);
@@ -26,14 +29,14 @@ export default function GitHubPipelineWorkspace({ canEdit = false }) {
 
   return <section className="workspace-panel azure-observability">
     <header className="workspace-header"><div><h1>DevSecOps</h1>
-      <p>Review recent GitHub Actions outcomes for a public repository.</p>
+      <p>Review recent GitHub Actions outcomes for a public or configured repository.</p>
     </div></header>
     <section className="card account-form">
       <h2>GitHub Actions evidence</h2>
-      <form className="account-form" onSubmit={load}>
+      <form className="account-form" onSubmit={load} key={configured && `${configured.owner}/${configured.repository}`}>
         <fieldset disabled={busy}>
-          <label>Repository owner<input name="owner" maxLength={39} required /></label>
-          <label>Repository name<input name="repository" maxLength={100} required /></label>
+          <label>Repository owner<input name="owner" defaultValue={configured?.owner} maxLength={39} required /></label>
+          <label>Repository name<input name="repository" defaultValue={configured?.repository} maxLength={100} required /></label>
           <button type="submit">Load workflow runs</button>
         </fieldset>
       </form>
@@ -64,5 +67,9 @@ export default function GitHubPipelineWorkspace({ canEdit = false }) {
       {showFindings ? "Hide repository findings" : "Review repository findings"}
     </button></div>
     {showFindings && <RepositoryFindings canEdit={canEdit} />}
+    {canManageConnection && <div><button type="button" aria-expanded={showConnection} onClick={() => setShowConnection((open) => !open)}>
+      {showConnection ? "Hide GitHub connection" : "Manage GitHub connection"}
+    </button></div>}
+    {showConnection && canManageConnection && <GitHubConnectionSettings onSaved={setConfigured} />}
   </section>;
 }

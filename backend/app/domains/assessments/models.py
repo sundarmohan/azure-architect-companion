@@ -64,3 +64,15 @@ class FindingRiskAcceptance(Base):
     rationale: Mapped[str] = mapped_column(Text)
     expires_on: Mapped[date]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VulnerabilitySlaPolicy(Base):
+    __tablename__ = "vulnerability_sla_policies"
+
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    critical_days: Mapped[int]
+    high_days: Mapped[int]
+    medium_days: Mapped[int]
+    low_days: Mapped[int]
+    informational_days: Mapped[int]
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

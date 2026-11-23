@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { getAzureActualCost, getAzureConnectionStatus, getAzureCostBudget, saveAzureCostBudget } from "../services/api";
-import { snapshotTime } from "./AzureSnapshotWorkspace";
+import { getAzureActualCost, getAzureConnectionStatus, getAzureCostBudget, getAzureCostRecommendations,
+  saveAzureCostBudget } from "../services/api";
+import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 const utcDate = (date) => date.toISOString().slice(0, 10);
 const DAY_MS = 86400000;
@@ -134,6 +135,56 @@ function SubscriptionBudget({ subscription, canEdit, result, today }) {
   </section>;
 }
 
+const ADVISOR_UNAVAILABLE = {
+  authentication_failure: "Azure Advisor authentication failed.",
+  permission_failure: "The Azure connection lacks permission to read Advisor recommendations.",
+  unsupported: "Azure Advisor recommendations are unavailable for this subscription.",
+  provider_error: "Azure Advisor did not return usable recommendation evidence.",
+};
+
+function AdvisorCostRecommendations({ subscription }) {
+  const [snapshot, setSnapshot] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setSnapshot(null);
+    setError("");
+    try {
+      setSnapshot(await getAzureCostRecommendations(subscription));
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <section className="account-form">
+    <h2>Azure Advisor cost recommendations</h2>
+    <button type="button" disabled={loading} onClick={load}>{loading ? "Loading recommendations…" : "Load cost recommendations"}</button>
+    {error && <p className="error" role="alert">{error}</p>}
+    {snapshot && <>
+      {snapshot.retrieved_at && <p>Retrieved {snapshotTime(snapshot.retrieved_at)}</p>}
+      {ADVISOR_UNAVAILABLE[snapshot.status] && <p role="status">{ADVISOR_UNAVAILABLE[snapshot.status]}</p>}
+      {snapshot.status === "partial_failure" && <p>Some Advisor entries could not be verified for this subscription.</p>}
+      {snapshot.truncated && <p>Recommendation coverage is limited to the first Azure response page, up to 25 entries.</p>}
+      {snapshot.status === "synced" && !snapshot.recommendations.length && <p>{snapshot.truncated
+        ? "The bounded Azure response contained no displayable cost recommendations."
+        : "Azure Advisor returned no cost recommendations."}</p>}
+      {snapshot.recommendations.length > 0 && <ul className="design-list">
+        {snapshot.recommendations.map((item) => <li key={item.id}>
+          <strong>{item.recommendation}</strong>
+          {item.problem && <p>{item.problem}</p>}
+          {item.resource_id && <p>{item.resource_id}</p>}
+          {item.impact && <p>Advisor impact {displayLabel(item.impact)}</p>}
+          {item.last_updated && <p>Advisor updated {snapshotTime(item.last_updated)}</p>}
+        </li>)}
+      </ul>}
+    </>}
+  </section>;
+}
+
 function SubscriptionCosts({ subscription, canEdit }) {
   const today = new Date();
   const monthStart = utcDate(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)));
@@ -188,6 +239,7 @@ function SubscriptionCosts({ subscription, canEdit }) {
       <CostAnomalyReview result={result} today={utcDate(today)} money={money} />
     </>}
     <SubscriptionBudget subscription={subscription} canEdit={canEdit} result={result} today={utcDate(today)} />
+    <AdvisorCostRecommendations subscription={subscription} />
   </>;
 }
 

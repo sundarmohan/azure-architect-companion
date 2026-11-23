@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.access.azure import confirm_active_connection, connection_values, select_subscription
 from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, get_db
+from .advisor import AdvisorCostRead, read_advisor_cost
 from .azure_cost_management_adapter import AzureCostManagementAdapter
 from .models import AzureCostBudget
 from .schemas import ActualCostDailyItem
@@ -37,6 +38,23 @@ class BudgetWrite(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
     amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+@router.get("/recommendations", response_model=AdvisorCostRead)
+async def read_cost_recommendations(
+    request: Request,
+    subscription_id: UUID,
+    client_id: UUID = Depends(client_access),
+    db: AsyncSession = Depends(get_db),
+):
+    connection = await db.get(AzureConnection, client_id)
+    values = await connection_values(db, client_id, connection) if connection else None
+    selected = select_subscription(values, subscription_id)
+    ciphertext = connection.ciphertext
+    await db.rollback()
+    result = await read_advisor_cost(selected, values)
+    await confirm_active_connection(db, request, client_id, ciphertext)
+    return result
 
 
 @router.get("/budget", response_model=BudgetWrite | None)

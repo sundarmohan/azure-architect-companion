@@ -9,6 +9,7 @@ import {
 import { displayLabel } from "./AzureSnapshotWorkspace";
 import VulnerabilityPortfolio from "./VulnerabilityPortfolio";
 import FindingRiskAcceptance from "./FindingRiskAcceptance";
+import VulnerabilitySlaPolicy, { FindingSla } from "./VulnerabilitySlaPolicy";
 
 const SEVERITIES = ["critical", "high", "medium", "low", "informational"];
 const STATUSES = ["open", "confirmed", "in_remediation", "ready_for_retest", "closed"];
@@ -206,6 +207,7 @@ function AssessmentFinding({ assessmentId, finding, canEdit, canManageRisk, onSa
       <div><dt>Owner</dt><dd>{finding.owner || "Unassigned"}</dd></div>
       <div><dt>Due date</dt><dd>{finding.due_date || "None"}</dd></div>
     </dl>
+    <FindingSla sla={finding.sla} />
     <details><summary>Evidence and retest notes</summary>
       <p>{finding.evidence}</p>
       {finding.tool_version && <p>Tool version {finding.tool_version}</p>}
@@ -301,6 +303,7 @@ export default function AssessmentWorkspace({ canEdit, canManageRisk }) {
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const [showPortfolio, setShowPortfolio] = useState(false);
+  const [showSlaPolicy, setShowSlaPolicy] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
 
@@ -338,10 +341,21 @@ export default function AssessmentWorkspace({ canEdit, canManageRisk }) {
       <p>Record assessment scope and authorization, import reviewed findings, and track remediation and retesting.</p>
     </div></div>
     {error && <p className="error" role="alert">{error}</p>}
-    {!selected && <div className="actions"><button type="button" aria-expanded={showPortfolio}
-      onClick={() => setShowPortfolio((open) => !open)}>
-      {showPortfolio ? "Hide vulnerability portfolio" : "Open vulnerability portfolio"}
-    </button></div>}
+    {!selected && <div className="actions">
+      <button type="button" aria-expanded={showPortfolio} onClick={() => {
+        setShowPortfolio((open) => !open);
+        setShowSlaPolicy(false);
+      }}>
+        {showPortfolio ? "Hide vulnerability portfolio" : "Open vulnerability portfolio"}
+      </button>
+      <button type="button" aria-expanded={showSlaPolicy} onClick={() => {
+        setShowSlaPolicy((open) => !open);
+        setShowPortfolio(false);
+      }}>
+        {showSlaPolicy ? "Hide SLA policy" : "Open SLA policy"}
+      </button>
+    </div>}
+    {!selected && showSlaPolicy && <VulnerabilitySlaPolicy canEdit={canManageRisk} />}
     {!selected && showPortfolio && <VulnerabilityPortfolio onOpenAssessment={openAssessment} opening={loadingDetail} />}
     {selected ? <AssessmentDetail key={selected.id} assessment={selected} canEdit={canEdit} canManageRisk={canManageRisk}
       onBack={() => setSelected(null)}

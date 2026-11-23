@@ -13,6 +13,8 @@ class ComplianceReview(Base):
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client_workspaces.id", ondelete="CASCADE"), primary_key=True)
     subscription_id: Mapped[UUID] = mapped_column(primary_key=True)
     topic: Mapped[str] = mapped_column(String(24), primary_key=True)
+    applicability: Mapped[str | None] = mapped_column(String(20))
+    outcome: Mapped[str | None] = mapped_column(String(24))
     state: Mapped[str] = mapped_column(String(24))
     note: Mapped[str] = mapped_column(Text)
     action: Mapped[str | None] = mapped_column(Text)

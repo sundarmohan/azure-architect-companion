@@ -154,7 +154,7 @@ export default function App() {
         ) : workspace === "backup" ? (
           <AzureBackupWorkspace canEdit={canEdit} />
         ) : workspace === "devsecops" ? (
-          <GitHubPipelineWorkspace canEdit={canEdit} />
+          <GitHubPipelineWorkspace canEdit={canEdit} canManageConnection={activeClient.role === "admin"} />
         ) : workspace === "reports" ? (
           <ReportsWorkspace />
         ) : workspace === "assessments" ? (
