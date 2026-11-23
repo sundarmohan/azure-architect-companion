@@ -9,9 +9,11 @@ from typing import Any
 import httpx
 
 try:
-    from azure.identity.aio import ClientSecretCredential
+    from azure.identity import ClientSecretCredential
+    from azure.identity.aio import ClientSecretCredential as AsyncClientSecretCredential
 except Exception:  # pragma: no cover - import guard for optional dependency
     ClientSecretCredential = None  # type: ignore[assignment]
+    AsyncClientSecretCredential = None  # type: ignore[assignment]
 
 
 class AzureCostManagementAdapter:
@@ -38,7 +40,8 @@ class AzureCostManagementAdapter:
                 "error": "Missing Azure subscription id for actual cost query",
             }
 
-        if ClientSecretCredential is None:
+        scoped = credentials is not None
+        if (scoped and AsyncClientSecretCredential is None) or (not scoped and ClientSecretCredential is None):
             return {
                 "available": False,
                 "error": "azure-identity is not installed; actual cost query is unavailable",
@@ -81,13 +84,13 @@ class AzureCostManagementAdapter:
             },
         }
 
+        credential_settings = dict(tenant_id=tenant_id, client_id=client_id, client_secret=client_secret)
         try:
-            async with ClientSecretCredential(
-                tenant_id=tenant_id,
-                client_id=client_id,
-                client_secret=client_secret,
-            ) as credential:
-                token = await credential.get_token("https://management.azure.com/.default")
+            if scoped:
+                async with AsyncClientSecretCredential(**credential_settings) as credential:
+                    token = await credential.get_token("https://management.azure.com/.default")
+            else:
+                token = await asyncio.to_thread(self._legacy_token, credential_settings)
         except Exception:
             return {
                 "available": False,
@@ -116,7 +119,9 @@ class AzureCostManagementAdapter:
                 return {"available": False, "error": "Azure returned a partial cost result. Select a shorter date range."}
             currency, total, daily = self._daily_charges(props, start_date, end_date)
             if not daily:
-                return {"available": False, "error": "Azure returned no billed charges for the selected dates"}
+                if scoped:
+                    return {"available": False, "error": "Azure returned no billed charges for the selected dates"}
+                currency, total = "USD", 0.0
 
             return {
                 "available": True,
@@ -179,6 +184,15 @@ class AzureCostManagementAdapter:
         except Exception:
             pass
         return 2.0
+
+    def _legacy_token(self, credentials):
+        credential = ClientSecretCredential(**credentials)
+        try:
+            return credential.get_token("https://management.azure.com/.default")
+        finally:
+            close = getattr(credential, "close", None)
+            if close:
+                close()
 
     def default_start_date(self) -> date:
         return (datetime.now(timezone.utc) - timedelta(days=30)).date()

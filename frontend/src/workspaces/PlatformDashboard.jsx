@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { getAzureConnectionStatus, getAzureInventory, getAzureMonitoring, getAzureSecurity } from "../services/api";
+import { getAzureConnectionStatus, getAzureInventory, getAzureMonitoring, getAzureSecurity, getAzureHealthIncidents, getComplianceReviews } from "../services/api";
 import { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
 
 const SOURCES = [
   ["inventory", "Inventory", getAzureInventory],
   ["monitoring", "Monitoring", getAzureMonitoring],
   ["security", "Security", getAzureSecurity],
+  ["incidents", "Incidents", (subscription) => getAzureHealthIncidents(subscription, 1)],
+  ["compliance", "Compliance", getComplianceReviews],
 ];
 
 function getSummary(snapshots) {
-  const { inventory, monitoring, security } = snapshots;
+  const { inventory, monitoring, security, incidents, compliance } = snapshots;
   const resources = monitoring?.resources || [];
   const confirmed = resources.filter(({ health_status, health }) =>
     health_status === "synced" && ["available", "degraded", "unavailable"].includes(health));
@@ -21,6 +23,8 @@ function getSummary(snapshots) {
     ["Acknowledged health findings", confirmed.length ? issues.filter(({ health_alert }) => health_alert?.acknowledged_at).length : null, "monitoring"],
     ["Security findings", security?.last_success_at || security?.findings?.length ? security.findings.length : null, "security"],
     ["Security risk score", Number.isFinite(security?.score) ? security.score : null, "security"],
+    ["Open or investigating incidents on first page", incidents?.incidents?.filter(({ status }) => status !== "resolved").length ?? null, "incidents"],
+    ["Compliance reviews requiring action", Array.isArray(compliance) ? compliance.filter(({ state }) => state === "action_required").length : null, "compliance"],
   ];
 }
 
@@ -31,9 +35,9 @@ function downloadSummary(clientName, subscription, snapshots, metrics) {
     sources: Object.fromEntries(SOURCES.map(([key]) => {
       const snapshot = snapshots[key];
       return [key, {
-        status: snapshot?.status ?? "unavailable",
+        status: snapshot?.status ?? (snapshot ? "records_available" : "unavailable"),
         last_complete_collection: snapshot?.last_success_at ?? null,
-        limitations: snapshot?.limitations ?? [],
+        limitations: snapshot?.limitations ?? (key === "incidents" && snapshot?.has_next ? ["Overview includes the first page of incidents."] : []),
       }];
     })),
   };
@@ -68,7 +72,7 @@ function SubscriptionDashboard({ clientName, subscription, onOpen }) {
         <article className="platform-card" key={label}>
           <h3>{label}</h3>
           <div className="platform-value">{value ?? "Unavailable"}</div>
-          <p>{displayLabel(snapshots[key]?.status)}</p>
+          <p>{displayLabel(snapshots[key]?.status || (snapshots[key] ? "Saved records" : "Unavailable"))}</p>
         </article>
       ))}
     </div>
@@ -77,8 +81,10 @@ function SubscriptionDashboard({ clientName, subscription, onOpen }) {
       {SOURCES.map(([key, label]) => {
         const snapshot = snapshots[key];
         return <div key={key}>
-          <button type="button" className="dismiss" onClick={() => onOpen(key)}>{label}</button>
-          <p>{snapshot ? `${displayLabel(snapshot.status)} | Last complete collection ${snapshotTime(snapshot.last_success_at)}` : "Saved evidence could not be loaded."}</p>
+          <button type="button" className="dismiss" onClick={() => onOpen(key === "incidents" ? "monitoring" : key)}>{label}</button>
+          {snapshot?.status && <p>{displayLabel(snapshot.status)} | Last complete collection {snapshotTime(snapshot.last_success_at)}</p>}
+          {!snapshot && <p>Saved evidence could not be loaded.</p>}
+          {key === "incidents" && snapshot?.has_next && <p>Overview includes the first page of incidents.</p>}
           {snapshot?.limitations?.length > 0 && <ul>{snapshot.limitations.map((limit, index) => <li key={index}>{limit}</li>)}</ul>}
         </div>;
       })}

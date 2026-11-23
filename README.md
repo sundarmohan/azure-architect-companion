@@ -77,12 +77,12 @@ responses.
 This is a source and CI inventory for the development branch. An active
 workflow requires a reachable screen or API, client authorization, and usable
 underlying behavior. A working core can still have coverage and live validation
-gaps. Six modules have a working core, nine are partial, and one lacks an active integration. These counts describe
+gaps. Six modules have a working core and ten have partial workflows. These counts describe
 module breadth rather than percent complete.
 
 | # | Module | Status | Available behavior and remaining gap |
 | --- | --- | --- | --- |
-| 1 | Overview Dashboard | Partial | Overview summarizes saved inventory, health, and security evidence for the selected subscription. Incident and compliance rollups remain open. |
+| 1 | Overview Dashboard | Partial | Overview summarizes saved inventory, health, security, recent incidents, and compliance review actions for the selected subscription. |
 | 2 | Architecture Designer | Working core | Active Azure catalog and canvas, resource relationships, review and approval, revision comparison and restore, validation, cost estimates, and Terraform and Ansible downloads. Export support is bounded by resource types and options. Inventory comparison currently covers top-level resource identities. |
 | 3 | Azure Cloud Management | Working core | Encrypted client connection, configured subscriptions, and stored resource inventory. Live Azure validation remains open. |
 | 4 | Infrastructure Monitoring | Working core | Azure Resource Health, supported performance and capacity metrics, polling, bounded diagnostics, and health triage. Coverage depends on resource type and permissions. Persisted alerts remain open. |
@@ -91,11 +91,11 @@ module breadth rather than percent complete.
 | 7 | Ethical Hacking | Working core | Authorized scope records, sanitized evidence imports, finding lifecycle, human retesting, and JSON exports. Testing and scanning are human-led outside the application. |
 | 8 | Vulnerability Management | Partial | Sanitized scanner-result imports, deduplication, severity, ownership, due dates, and remediation tracking already work. The portfolio brings these records together and includes related Defender evidence. Policy SLAs and risk acceptance remain open. |
 | 9 | Threat Detection | Partial | Selected Azure Activity patterns and Defender alerts are displayed. Broader event correlation and incident investigations remain open. |
-| 10 | DevSecOps | Missing integration | Read-only GitHub and pipeline evidence ingestion, plus dependency, image, secret, and IaC finding workflows, remain open. |
+| 10 | DevSecOps | Partial | The workspace reads recent workflow run evidence from public GitHub repositories. Private repository connections and dependency, image, secret, and IaC finding workflows remain open. |
 | 11 | Compliance Engine | Partial | The active Compliance workspace reviews saved Azure technical evidence. Supports recorded technical reviews and corrective actions. Framework catalogs, review history, and reporting remain open. |
 | 12 | Alerts & Incidents | Partial | Monitoring supports acknowledgement of saved health evidence. Operators can create linked incidents and record ownership, status, and RCA notes. Escalation, notifications, and corrective action workflows remain open. |
-| 13 | Cost Management | Partial | Design estimates and actual Azure costs are active. Budget policies, anomaly detection, and optimization remain open. |
-| 14 | Backup & DR | Partial | Backup shows bounded job, restore, and protected item evidence from inventoried Recovery Services vaults. Retention policies and RPO/RTO validation remain open. |
+| 13 | Cost Management | Partial | Design estimates, actual Azure costs, and local monthly budget comparisons are active. Anomaly detection and optimization remain open. |
+| 14 | Backup & DR | Partial | Backup shows bounded job, restore, protected item, and supported retention evidence from inventoried Recovery Services vaults. RPO/RTO validation remains open. |
 | 15 | Reports | Partial | Overview exports a subscription evidence summary. Assessment and design exports remain available. General technical, compliance, and executive reporting still need integration. |
 | 16 | Administration | Working core | Local accounts, multi-client workspaces, role assignment, encrypted Azure credentials, and scoped audit review. Broader policy and integration administration remain open. |
 

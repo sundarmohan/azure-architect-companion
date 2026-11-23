@@ -24,6 +24,7 @@ MAX_VAULTS = 6
 MAX_ROWS = 25
 PROPERTIES = {
     "jobs": ("entityFriendlyName", "operation", "status", "startTime", "endTime"),
+    "policies": ("backupManagementType",),
     "protected_items": ("friendlyName", "protectionState", "protectionStatus", "lastBackupStatus",
                         "lastBackupTime", "lastRecoveryPoint", "policyId"),
 }
@@ -41,6 +42,25 @@ def vaults_for_inventory(resources, subscription):
     return list(vaults.values())
 
 
+def retention_summary(policy):
+    if not isinstance(policy, dict):
+        return ""
+    schedules = [(label, policy.get(key)) for label, key in (
+        ("Daily", "dailySchedule"), ("Weekly", "weeklySchedule"),
+        ("Monthly", "monthlySchedule"), ("Yearly", "yearlySchedule"),
+    )]
+    schedules.append(("", policy))
+    parts = []
+    for label, schedule in schedules:
+        duration = schedule.get("retentionDuration") if isinstance(schedule, dict) else None
+        if not isinstance(duration, dict):
+            continue
+        count, unit = duration.get("count"), duration.get("durationType")
+        if type(count) is int and count > 0 and unit in ("Days", "Weeks", "Months", "Years"):
+            parts.append(f"{label} {count} {unit.lower()}".strip())
+    return "; ".join(parts)
+
+
 async def read_rows(http, semaphore, headers, vault, collection, endpoint, version):
     status, payload = await request_json(http, semaphore, f"{ARM}{quote(vault, safe='/')}/{endpoint}",
                                          {"api-version": version}, headers)
@@ -53,7 +73,13 @@ async def read_rows(http, semaphore, headers, vault, collection, endpoint, versi
             props = item.get("properties") if isinstance(item, dict) else None
             if not isinstance(props, dict):
                 continue
-            rows.append({key: props[key][:512] for key in PROPERTIES[collection] if isinstance(props.get(key), str)})
+            row = {key: props[key][:512] for key in PROPERTIES[collection] if isinstance(props.get(key), str)}
+            if collection == "policies":
+                name = item.get("name")
+                if isinstance(name, str):
+                    row["name"] = name[:160]
+                row["retention"] = retention_summary(props.get("retentionPolicy"))
+            rows.append(row)
     return {"status": status, "rows": rows,
             "truncated": bool(payload.get("nextLink")) or (isinstance(items, list) and len(items) > MAX_ROWS)}
 
@@ -66,11 +92,12 @@ async def collect_vaults(vaults, values):
     semaphore = asyncio.Semaphore(4)
     async with httpx.AsyncClient(timeout=8, follow_redirects=False) as http:
         async def collect(vault, name):
-            jobs, items = await asyncio.gather(
+            jobs, items, policies = await asyncio.gather(
                 read_rows(http, semaphore, headers, vault, "jobs", "backupJobs", "2025-08-01"),
                 read_rows(http, semaphore, headers, vault, "protected_items", "backupProtectedItems", "2025-02-01"),
+                read_rows(http, semaphore, headers, vault, "policies", "backupPolicies", "2025-08-01"),
             )
-            return {"id": vault, "name": name, "jobs": jobs, "protected_items": items}
+            return {"id": vault, "name": name, "jobs": jobs, "protected_items": items, "policies": policies}
 
         return await asyncio.gather(*(collect(*vault) for vault in vaults))
 
@@ -82,8 +109,8 @@ async def backup_evidence(request: Request, subscription_id: UUID | None = None,
     if not context or not context.inventory_exists:
         return {"status": "inventory_required" if context else "not_configured", "vaults": [], "limitations": []}
     all_vaults = vaults_for_inventory(context.resources, context.subscription_id)
-    limitations = ["Each vault shows up to 25 jobs and protected items from the first Azure response page.",
-                   "Restore jobs provide operational evidence. Retention policies, recovery objectives, and restore testing require additional evidence."]
+    limitations = ["Each vault shows up to 25 records per evidence type from the first Azure response page.",
+                   "Retention is shown for supported policy shapes. Restore jobs and recovery points require separate validation against recovery objectives."]
     if context.inventory_is_stale:
         limitations.append("The latest inventory refresh failed. The vault list may be stale.")
     if len(all_vaults) > MAX_VAULTS:
@@ -100,7 +127,7 @@ async def backup_evidence(request: Request, subscription_id: UUID | None = None,
     except (TimeoutError, httpx.HTTPError):
         vaults, status = [], "provider_error"
     else:
-        statuses = {vault[key]["status"] for vault in vaults for key in ("jobs", "protected_items")}
+        statuses = {vault[key]["status"] for vault in vaults for key in ("jobs", "protected_items", "policies")}
         status = next(iter(statuses)) if len(statuses) == 1 else "partial_failure"
     await confirm_active_connection(db, request, client_id, context.ciphertext)
     return {"status": status, "retrieved_at": datetime.now(timezone.utc), "vaults": vaults, "limitations": limitations}

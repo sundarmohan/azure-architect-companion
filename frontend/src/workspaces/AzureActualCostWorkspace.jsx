@@ -1,10 +1,80 @@
 import { useEffect, useState } from "react";
-import { getAzureActualCost, getAzureConnectionStatus } from "../services/api";
+import { getAzureActualCost, getAzureConnectionStatus, getAzureCostBudget, saveAzureCostBudget } from "../services/api";
 import { snapshotTime } from "./AzureSnapshotWorkspace";
 
 const utcDate = (date) => date.toISOString().slice(0, 10);
 
-function SubscriptionCosts({ subscription }) {
+function coversMonthlyBudget(result, today) {
+  const start = new Date(result.start_date);
+  if (start.getUTCDate() !== 1) return false;
+  start.setUTCMonth(start.getUTCMonth() + 1, 0);
+  const monthEnd = utcDate(start);
+  return result.end_date === (monthEnd < today ? monthEnd : today);
+}
+
+function SubscriptionBudget({ subscription, canEdit, result, today }) {
+  const [budget, setBudget] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const currency = (result?.available && result.currency) || budget?.currency;
+  const money = budget ? new Intl.NumberFormat(undefined, { style: "currency", currency: budget.currency }) : null;
+
+  useEffect(() => {
+    let active = true;
+    getAzureCostBudget(subscription).then((data) => {
+      if (active) setBudget(data);
+    }).catch((failure) => {
+      if (active && failure.name !== "AbortError") setError(failure.message);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [subscription]);
+
+  async function save(event) {
+    event.preventDefault();
+    const amount = new FormData(event.currentTarget).get("amount");
+    setError("");
+    setFeedback("");
+    setSaving(true);
+    try {
+      setBudget(await saveAzureCostBudget(subscription, { amount, currency }));
+      setFeedback("Monthly budget saved.");
+    } catch (failure) {
+      if (failure.name !== "AbortError") setError(failure.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="account-form">
+    <h2>Monthly budget</h2>
+    <p>This threshold is stored in MonitorAI.</p>
+    {loading && <p role="status">Loading monthly budget…</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+    {!loading && !error && !budget && <p>No monthly budget is configured.</p>}
+    {budget && <p>Current monthly budget <strong>{money.format(budget.amount)}</strong> ({budget.currency})</p>}
+    {budget && result?.available && (result.currency !== budget.currency
+      ? <p>Budget comparison unavailable because the charge and budget currencies differ.</p>
+      : !coversMonthlyBudget(result, today) ? <p>Load a complete month or this month to date for comparison.</p>
+        : <p>Reported charges use {new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 })
+          .format(result.total_cost / Number(budget.amount))} of the current budget.</p>)}
+    {!loading && canEdit && (currency
+      ? <form className="account-form" onSubmit={save} key={`${currency}-${budget?.amount || ""}`}>
+        <fieldset disabled={saving}>
+          <label>Monthly budget amount ({currency})<input name="amount" type="number" min="0.01" max="999999999999.99"
+            step="0.01" defaultValue={budget?.currency === currency ? budget.amount : ""} required /></label>
+          <button type="submit">{saving ? "Saving…" : "Save monthly budget"}</button>
+        </fieldset>
+      </form>
+      : <p>Load Azure charges to identify the billing currency before setting a budget.</p>)}
+    {feedback && <p role="status">{feedback}</p>}
+  </section>;
+}
+
+function SubscriptionCosts({ subscription, canEdit }) {
   const today = new Date();
   const monthStart = utcDate(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)));
   const [result, setResult] = useState(null);
@@ -56,10 +126,11 @@ function SubscriptionCosts({ subscription }) {
         </tr>)}</tbody>
       </table></div>
     </>}
+    <SubscriptionBudget subscription={subscription} canEdit={canEdit} result={result} today={utcDate(today)} />
   </>;
 }
 
-export default function AzureActualCostWorkspace() {
+export default function AzureActualCostWorkspace({ canEdit = false }) {
   const [subscriptions, setSubscriptions] = useState(null);
   const [selection, setSelection] = useState("");
   const [error, setError] = useState("");
@@ -89,7 +160,7 @@ export default function AzureActualCostWorkspace() {
           <label>Subscription<select value={selection} onChange={(event) => setSelection(event.target.value)}>
             {subscriptions.map((id) => <option key={id} value={id}>{id}</option>)}
           </select></label>
-          <SubscriptionCosts key={selection} subscription={selection} />
+          <SubscriptionCosts key={selection} subscription={selection} canEdit={canEdit} />
         </>}
     </div>
   </section>;

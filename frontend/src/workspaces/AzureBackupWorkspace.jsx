@@ -11,6 +11,10 @@ const ITEM_FIELDS = [
   ["lastRecoveryPoint", "Recovery point"], ["policyId", "Policy"],
 ];
 
+const POLICY_FIELDS = [
+  ["name", "Policy"], ["backupManagementType", "Management type"], ["retention", "Retention"],
+];
+
 function EvidenceTable({ title, evidence, fields }) {
   return <section className="account-form">
     <h4>{title}</h4>
@@ -38,6 +42,7 @@ export default function AzureBackupWorkspace() {
         <h3>{vault.name}</h3>
         <EvidenceTable title="Backup and restore jobs" evidence={vault.jobs} fields={JOB_FIELDS} />
         <EvidenceTable title="Protected items" evidence={vault.protected_items} fields={ITEM_FIELDS} />
+        <EvidenceTable title="Retention policies" evidence={vault.policies} fields={POLICY_FIELDS} />
       </section>)}
     </section>}
   </AzureSnapshotWorkspace>;

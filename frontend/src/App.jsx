@@ -7,6 +7,7 @@ import AzureNetworkWorkspace from "./workspaces/AzureNetworkWorkspace";
 import AzureSecurityWorkspace from "./workspaces/AzureSecurityWorkspace";
 import AzureActualCostWorkspace from "./workspaces/AzureActualCostWorkspace";
 import AzureBackupWorkspace from "./workspaces/AzureBackupWorkspace";
+import GitHubPipelineWorkspace from "./workspaces/GitHubPipelineWorkspace";
 import PlatformDashboard from "./workspaces/PlatformDashboard";
 import ComplianceWorkspace from "./workspaces/ComplianceWorkspace";
 import AssessmentWorkspace from "./workspaces/AssessmentWorkspace";
@@ -108,6 +109,7 @@ export default function App() {
             <button className={`nav-item ${workspace === "compliance" ? "active" : ""}`} onClick={() => setWorkspace("compliance")}>Compliance</button>
             <button className={`nav-item ${workspace === "assessments" ? "active" : ""}`} onClick={() => setWorkspace("assessments")}>Assessments</button>
             <button className={`nav-item ${workspace === "cost" ? "active" : ""}`} onClick={() => setWorkspace("cost")}>Cost</button>
+            <button className={`nav-item ${workspace === "devsecops" ? "active" : ""}`} onClick={() => setWorkspace("devsecops")}>DevSecOps</button>
             <button className={`nav-item ${workspace === "backup" ? "active" : ""}`} onClick={() => setWorkspace("backup")}>Backup</button>
             <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
           </>}
@@ -146,11 +148,13 @@ export default function App() {
         ) : workspace === "compliance" ? (
           <ComplianceWorkspace canEdit={canEdit} />
         ) : workspace === "cost" ? (
-          <AzureActualCostWorkspace />
+          <AzureActualCostWorkspace canEdit={canEdit} />
         ) : workspace === "backup" ? (
           <AzureBackupWorkspace />
+        ) : workspace === "devsecops" ? (
+          <GitHubPipelineWorkspace />
         ) : workspace === "assessments" ? (
-          <AssessmentWorkspace canEdit={canEdit} />
+          <AssessmentWorkspace canEdit={canEdit} canManageRisk={activeClient.role === "admin"} />
         ) : (
           <ArchitectureWorkspace canEdit={canEdit} canApprove={activeClient.role === "admin"} />
         )}
