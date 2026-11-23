@@ -102,6 +102,7 @@ def test_recovery_objectives_are_scoped_persisted_and_audited(monkeypatch):
     monkeypatch.setenv("MONITORAI_AZURE_ENCRYPTION_KEY", Fernet.generate_key().decode())
     subscription = str(uuid4())
     path = "/api/azure/backup/objectives"
+    restore_path = "/api/azure/backup/restore-tests"
     params = {"subscription_id": subscription}
     objectives = {"rpo_hours": 24, "rto_minutes": 60}
     with TestClient(app, base_url="https://testserver") as client:
@@ -124,8 +125,26 @@ def test_recovery_objectives_are_scoped_persisted_and_audited(monkeypatch):
         assert saved.status_code == 200, saved.text
         assert client.get(path, headers=headers, params=params).json() == objectives
         assert client.get(path, headers=other_headers, params=params).json() is None
+        restore = {
+            "resource_name": "Finance VM", "tested_at": "2026-11-01T10:00:00Z", "outcome": "passed",
+            "recovery_minutes": 45, "evidence_reference": "change-1042", "notes": "Application owner validated",
+        }
+        record_id = str(uuid4())
+        assert client.get(restore_path, headers=headers, params=params).json() == []
+        assert client.put(f"{restore_path}/{record_id}", headers=headers, params=params,
+                          json={**restore, "tested_at": "2099-01-01T00:00:00Z"}).status_code == 422
+        recorded = client.put(f"{restore_path}/{record_id}", headers=headers, params=params, json=restore)
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["resource_name"] == "Finance VM"
+        assert client.put(f"{restore_path}/{record_id}", headers=headers, params=params, json=restore).json() == recorded.json()
+        assert client.put(f"{restore_path}/{record_id}", headers=headers, params=params,
+                          json={**restore, "outcome": "failed"}).status_code == 409
+        assert [item["id"] for item in client.get(restore_path, headers=headers, params=params).json()] == [record_id]
+        assert client.get(restore_path, headers=other_headers, params=params).json() == []
         assert any(event["action"] == "save_azure_recovery_objectives" for event in
                    client.get("/api/audit", headers=headers).json())
+        assert sum(event["action"] == "record_azure_restore_test" for event in
+                   client.get("/api/audit", headers=headers).json()) == 1
         editor = "backup-editor-" + uuid4().hex
         assert client.post("/api/auth/users", headers=WRITE, json={"username": editor, "password": PASSWORD}).status_code == 201
         for client_id, role in [(first, "editor"), (second, "viewer")]:
@@ -138,3 +157,6 @@ def test_recovery_objectives_are_scoped_persisted_and_audited(monkeypatch):
         assert client.put(path, headers=headers, params=params, json=updated).json() == updated
         assert client.get(path, headers=other_headers, params=params).json() is None
         assert client.put(path, headers=other_headers, params=params, json=objectives).status_code == 403
+        assert client.get(restore_path, headers=other_headers, params=params).json() == []
+        assert client.put(f"{restore_path}/{uuid4()}", headers=other_headers, params=params,
+                          json=restore).status_code == 403

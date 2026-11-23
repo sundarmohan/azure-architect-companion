@@ -3,14 +3,15 @@
 import asyncio
 import re
 from datetime import datetime, timezone
+from typing import Literal
 from urllib.parse import quote
 from uuid import UUID
 
 import httpx
 from azure.core.exceptions import AzureError
 from azure.identity.aio import ClientSecretCredential
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, get_db
 from app.domains.monitoring.observations import observation_context
 from app.domains.monitoring.telemetry import request_json
-from .models import AzureRecoveryObjectives
+from .models import AzureRecoveryObjectives, AzureRestoreTest
 
 router = APIRouter()
 ARM = "https://management.azure.com"
@@ -44,6 +45,22 @@ class RecoveryObjectivesWrite(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
     rpo_hours: int = Field(strict=True, ge=1, le=8760)
     rto_minutes: int = Field(strict=True, ge=1, le=525600)
+
+
+class RestoreTestWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    resource_name: str = Field(min_length=1, max_length=200)
+    tested_at: AwareDatetime
+    outcome: Literal["passed", "failed", "partial"]
+    recovery_minutes: int | None = Field(default=None, strict=True, ge=1, le=525600)
+    evidence_reference: str | None = Field(default=None, min_length=1, max_length=500)
+    notes: str | None = Field(default=None, min_length=1, max_length=1000)
+
+
+class RestoreTestRead(RestoreTestWrite):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    created_at: AwareDatetime
 
 
 @router.get("/backup/objectives", response_model=RecoveryObjectivesWrite | None)
@@ -76,6 +93,53 @@ async def save_recovery_objectives(
     audit(db, "save_azure_recovery_objectives", request.state.account, client_id, str(subscription_id))
     await db.commit()
     return payload
+
+
+@router.get("/backup/restore-tests", response_model=list[RestoreTestRead])
+async def list_restore_tests(
+    subscription_id: UUID | None = None,
+    client_id: UUID = Depends(client_access),
+    db: AsyncSession = Depends(get_db),
+):
+    selected = UUID(select_subscription(await connection_values(db, client_id), subscription_id))
+    return (await db.scalars(select(AzureRestoreTest).where(
+        AzureRestoreTest.client_id == client_id, AzureRestoreTest.subscription_id == selected,
+    ).order_by(AzureRestoreTest.tested_at.desc(), AzureRestoreTest.id).limit(50))).all()
+
+
+@router.put("/backup/restore-tests/{record_id}", response_model=RestoreTestRead)
+async def record_restore_test(
+    record_id: UUID,
+    payload: RestoreTestWrite,
+    request: Request,
+    subscription_id: UUID | None = None,
+    client_id: UUID = Depends(client_access),
+    db: AsyncSession = Depends(get_db),
+):
+    if payload.tested_at > datetime.now(timezone.utc):
+        raise HTTPException(422, "Restore test time cannot be in the future")
+    connection = await db.scalar(select(AzureConnection).where(AzureConnection.client_id == client_id).with_for_update())
+    selected = UUID(select_subscription(
+        await connection_values(db, client_id, connection) if connection else None, subscription_id,
+    ))
+    existing = await db.get(AzureRestoreTest, record_id)
+    values = payload.model_dump()
+    if existing is not None:
+        same_scope = existing.client_id == client_id and existing.subscription_id == selected
+        same_values = same_scope and all(getattr(existing, key) == value for key, value in values.items())
+        if not same_values:
+            raise HTTPException(409, "Restore test record identifier already used")
+        return RestoreTestRead.model_validate(existing)
+    record = AzureRestoreTest(
+        id=record_id, client_id=client_id, subscription_id=selected,
+        actor_id=request.state.account.id, **values,
+    )
+    db.add(record)
+    await db.flush()
+    audit(db, "record_azure_restore_test", request.state.account, client_id, str(record_id))
+    result = RestoreTestRead.model_validate(record)
+    await db.commit()
+    return result
 
 
 def vaults_for_inventory(resources, subscription):

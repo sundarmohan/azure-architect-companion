@@ -151,6 +151,11 @@ export const getAzureCostBudget=id=>fetchRequest(`/azure/cost/budget${subscripti
 export const saveAzureCostBudget=(id,data)=>request(`/azure/cost/budget${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
 export const getAzureRecoveryObjectives=id=>fetchRequest(`/azure/backup/objectives${subscriptionQuery(id)}`);
 export const saveAzureRecoveryObjectives=(id,data)=>request(`/azure/backup/objectives${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});
+export const getAzureRestoreTests=id=>fetchRequest(`/azure/backup/restore-tests${subscriptionQuery(id)}`);
+export const recordAzureRestoreTest=(subscription,id,data)=>request(
+ `/azure/backup/restore-tests/${encodeURIComponent(id)}${subscriptionQuery(subscription)}`,
+ {method:"PUT",body:JSON.stringify(data)},
+);
 export const getAzureBackupEvidence=id=>fetchRequest(`/azure/backup/evidence${subscriptionQuery(id)}`);
 export const getComplianceReviews=id=>fetchRequest(`/compliance/reviews${subscriptionQuery(id)}`);
 export const saveComplianceReview=(id,topic,data)=>request(`/compliance/reviews/${encodeURIComponent(topic)}${subscriptionQuery(id)}`,{method:"PUT",body:JSON.stringify(data)});

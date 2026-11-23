@@ -1,12 +1,15 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { getAzureBackupEvidence, getAzureConnectionStatus, getAzureRecoveryObjectives, saveAzureRecoveryObjectives } from "../services/api";
+import { getAzureBackupEvidence, getAzureConnectionStatus, getAzureRecoveryObjectives, getAzureRestoreTests,
+  saveAzureRecoveryObjectives } from "../services/api";
 import AzureBackupWorkspace, { compareRecoveryEvidence } from "./AzureBackupWorkspace";
 
 vi.mock("../services/api", () => ({
   getAzureBackupEvidence: vi.fn(),
   getAzureConnectionStatus: vi.fn(),
   getAzureRecoveryObjectives: vi.fn(),
+  getAzureRestoreTests: vi.fn(),
+  recordAzureRestoreTest: vi.fn(),
   saveAzureRecoveryObjectives: vi.fn(),
 }));
 
@@ -14,6 +17,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   getAzureConnectionStatus.mockResolvedValue({ configured_subscription_ids: ["sub-a", "sub-b"] });
   getAzureBackupEvidence.mockResolvedValue({ status: "no_vaults_in_inventory", vaults: [] });
+  getAzureRestoreTests.mockResolvedValue([]);
 });
 
 it("compares only captured recovery point times and completed restore job durations", () => {

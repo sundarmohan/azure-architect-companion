@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAzureBackupEvidence, getAzureRecoveryObjectives, saveAzureRecoveryObjectives } from "../services/api";
 import AzureSnapshotWorkspace, { displayLabel, snapshotTime } from "./AzureSnapshotWorkspace";
+import AzureRestoreTests from "./AzureRestoreTests";
 
 const JOB_FIELDS = [
   ["entityFriendlyName", "Resource"], ["operation", "Operation"], ["status", "Status"],
@@ -142,6 +143,7 @@ export default function AzureBackupWorkspace({ canEdit = false }) {
     {(snapshot, subscription) => <>
       <RecoveryObjectives vaults={snapshot?.vaults || []} retrievedAt={snapshot?.retrieved_at}
         subscription={subscription} canEdit={canEdit} />
+      <AzureRestoreTests subscription={subscription} canEdit={canEdit} />
       {snapshot && <section className="card account-form">
         <h2>Recovery Services evidence</h2>
         {snapshot.status === "no_vaults_in_inventory" && <p>No Recovery Services vaults were found in the saved inventory.</p>}
