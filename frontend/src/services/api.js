@@ -38,7 +38,7 @@ async function fetchRequest(path,options={}){
  verifySession();
  if(!r.ok){
   let message=`HTTP ${r.status}`;
-  let correlationId=r.headers.get("X-Correlation-ID")||"";
+  let correlationId=r.headers?.get?.("X-Correlation-ID")||"";
   try{
    const raw=await r.text();
    const payload=raw?JSON.parse(raw):null;
