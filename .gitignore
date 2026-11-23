@@ -76,6 +76,7 @@ frontend/dist/
 
 # Local-only data and scratch files (never commit DB dumps or exports)
 backups/
+*.har
 *.dump
 *.sql.gz
 PHASE_F_*.tsv

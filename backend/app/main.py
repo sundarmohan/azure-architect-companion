@@ -15,6 +15,7 @@ from app.domains.settings import models as settings_models  # noqa: F401
 from app.domains.incidents import models as incident_models  # noqa: F401
 from app.domains.monitoring import models as monitoring_models  # noqa: F401
 from app.domains.monitoring.observation_worker import run_worker, stop_worker
+from app.request_safety import safe_request_boundary
 
 app = FastAPI(title="MonitorAI V2.20 API", version="2.20")
 
@@ -38,6 +39,9 @@ async def prevent_api_caching(request: Request, call_next):
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+app.middleware("http")(safe_request_boundary)
 
 
 @app.exception_handler(RequestValidationError)
