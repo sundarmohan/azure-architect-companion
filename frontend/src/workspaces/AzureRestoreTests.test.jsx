@@ -16,7 +16,7 @@ it("records append-only restore exercise evidence", async () => {
   }));
   render(<AzureRestoreTests subscription="sub-a" canEdit />);
   expect(await screen.findByText("No restore tests are recorded for this subscription.")).toBeInTheDocument();
-  fireEvent.click(screen.getByText("Record restore test"));
+  fireEvent.click(screen.getByText("Record restore test", { selector: "summary" }));
   fireEvent.change(screen.getByLabelText("Restored resource or workload"), { target: { value: "Finance VM" } });
   fireEvent.change(screen.getByLabelText("Test completed at"), { target: { value: "2026-11-01T10:00" } });
   fireEvent.change(screen.getByLabelText("Observed recovery time (minutes)"), { target: { value: "45" } });
