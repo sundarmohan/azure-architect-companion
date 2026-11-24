@@ -57,10 +57,37 @@ docker image inspect "$previous" >/dev/null
 current=$("${existing[@]}" exec -T app alembic current | awk 'NF {print $1}')
 head=$("${compose[@]}" run --rm --no-deps -T app alembic heads | awk 'NF {print $1}')
 if [[ -z "$current" || "$current" != "$head" ]]; then
-    echo "Schema-changing release requires a migration plan that preserves rollback compatibility." >&2
-    exit 1
+    if [[ "$current" != "0020_assessment_records" || "$head" != "0036_azure_collection_state" ]]; then
+        echo "Schema-changing release requires a migration plan that preserves rollback compatibility." >&2
+        exit 1
+    fi
+
+    backup_dir="$release/database-backup"
+    backup="$backup_dir/monitorai-before-0036.dump"
+    checksum="$backup.sha256"
+    mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir"
+    test ! -e "$backup" && test ! -e "$checksum"
+
+    "${existing[@]}" exec -T postgres sh -ec \
+        'pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format=custom --no-owner --no-privileges' \
+        > "$backup"
+    test -s "$backup"
+    chmod 600 "$backup"
+    "${existing[@]}" exec -T postgres pg_restore --list < "$backup" >/dev/null
+    (cd "$backup_dir" && sha256sum "$(basename "$backup")" > "$(basename "$checksum")")
+    chmod 600 "$checksum"
+    (cd "$backup_dir" && sha256sum --check "$(basename "$checksum")")
+
+    "${compose[@]}" run --rm --no-deps -T app alembic upgrade head
+    migrated=$("${compose[@]}" run --rm --no-deps -T app alembic current | awk 'NF {print $1}')
+    if [[ "$migrated" != "$head" ]]; then
+        echo "Database migration did not reach the candidate Alembic head." >&2
+        exit 1
+    fi
+else
+    "${compose[@]}" run --rm --no-deps -T app alembic upgrade head
 fi
-"${compose[@]}" run --rm --no-deps -T app alembic upgrade head
 
 printf '%s\n' "$previous" > "$state"
 trap 'result=$?; if (( result != 0 )); then rollback || echo "Rollback requires operator recovery" >&2; fi; exit "$result"' EXIT

@@ -374,5 +374,11 @@ Stabilization verification rules:
   build through GitHub Actions.
 - Do not publish Docker images or deploy to EC2 during stabilization development.
 - Browser validation follows successful CI and an explicitly approved deployment.
+- Do not run application tests locally. Functional verification must use the
+  deployed production application in a browser so the active frontend, API,
+  database schema and Azure integration are exercised together.
+- Live production credentials are restricted to read-only Azure access during
+  verification. Browser checks may test authentication, subscription reads and
+  evidence collection, but must not create, update or delete Azure resources.
 
 Final product objective: MonitorAI should become one platform through which you can manage a portfolio of clients' Azure infrastructure, monitor operational health, identify security weaknesses, conduct authorized security assessments, measure compliance, investigate incidents and produce management reports—all with evidence, accountability and human control.
