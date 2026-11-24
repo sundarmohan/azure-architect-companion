@@ -30,6 +30,7 @@ GRAPH_ENDPOINTS = {
     "list_relationships", "create_relationship", "delete_relationship", "validate_relationship",
     "list_subscriptions", "create_subscription", "list_resource_groups", "create_resource_group",
     "update_resource_group", "delete_resource_group", "list_dependencies", "estimate_architecture_cost",
+    "discover_azure_resources",
 }
 
 

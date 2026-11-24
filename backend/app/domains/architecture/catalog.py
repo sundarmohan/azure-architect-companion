@@ -397,16 +397,20 @@ AZURE_ARCHITECTURE_PATTERNS = [
 
 VALID_RELATIONSHIP_TYPES = {
     "connects_to",
+    "traffic_flow",
     "contains",
     "depends_on",
+    "hosted_on",
     "deployed_in",
     "integrated_with",
+    "private_link",
 }
 
 VALID_RELATIONSHIP_MATRIX = {
-    ("vnet", "subnet"): {"contains", "connects_to"},
+    ("vnet", "subnet"): {"contains", "connects_to", "traffic_flow"},
     ("subnet", "vm"): {"contains", "deployed_in", "connects_to"},
-    ("subnet", "appservice"): {"contains", "integrated_with", "connects_to"},
+    ("subnet", "appservice"): {"contains", "integrated_with", "connects_to", "traffic_flow"},
+    ("appservice", "subnet"): {"integrated_with", "connects_to", "traffic_flow"},
     ("subnet", "gateway"): {"contains", "deployed_in", "connects_to"},
     ("subnet", "sql"): {"contains", "deployed_in", "connects_to"},
     ("subnet", "natgateway"): {"integrated_with", "depends_on", "connects_to"},
@@ -425,9 +429,9 @@ VALID_RELATIONSHIP_MATRIX = {
     ("firewall", "publicip"): {"deployed_in", "integrated_with", "connects_to"},
     ("bastion", "publicip"): {"depends_on", "deployed_in", "connects_to"},
     ("user", "publicip"): {"connects_to"},
-    ("gateway", "appservice"): {"connects_to", "depends_on"},
-    ("appservice", "sql"): {"connects_to", "depends_on"},
-    ("appservice", "appserviceplan"): {"depends_on", "deployed_in"},
+    ("gateway", "appservice"): {"connects_to", "traffic_flow", "depends_on"},
+    ("appservice", "sql"): {"connects_to", "traffic_flow", "depends_on"},
+    ("appservice", "appserviceplan"): {"hosted_on", "depends_on", "deployed_in"},
     ("sql", "sqlserver"): {"depends_on", "deployed_in"},
     ("container", "containerenv"): {"depends_on", "deployed_in"},
     ("aks", "subnet"): {"depends_on", "deployed_in"},
@@ -437,10 +441,10 @@ VALID_RELATIONSHIP_MATRIX = {
     ("user", "gateway"): {"connects_to"},
     ("subnet", "privateendpoint"): {"contains", "deployed_in"},
     ("privateendpoint", "subnet"): {"contains", "deployed_in"},
-    ("privateendpoint", "appservice"): {"integrated_with"},
-    ("privateendpoint", "storage"): {"integrated_with"},
-    ("privateendpoint", "sql"): {"integrated_with"},
-    ("privateendpoint", "keyvault"): {"integrated_with"},
+    ("privateendpoint", "appservice"): {"private_link", "integrated_with"},
+    ("privateendpoint", "storage"): {"private_link", "integrated_with"},
+    ("privateendpoint", "sql"): {"private_link", "integrated_with"},
+    ("privateendpoint", "keyvault"): {"private_link", "integrated_with"},
 }
 
 # These relationships are supported by Azure, but need configuration such as
@@ -454,11 +458,14 @@ CONDITIONAL_RELATIONSHIP_MATRIX = {
 }
 
 RELATIONSHIP_KIND_BY_TYPE = {
-    "contains": "hierarchy",
-    "deployed_in": "hierarchy",
-    "connects_to": "network_data_flow",
+    "contains": "containment",
+    "deployed_in": "containment",
+    "connects_to": "traffic",
+    "traffic_flow": "traffic",
     "depends_on": "service_dependency",
-    "integrated_with": "association",
+    "hosted_on": "hosting",
+    "integrated_with": "integration",
+    "private_link": "integration",
 }
 
 

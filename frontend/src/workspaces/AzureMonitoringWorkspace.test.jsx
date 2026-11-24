@@ -193,10 +193,30 @@ describe("Azure monitoring workspace", () => {
 
     await screen.findByRole("heading", { name: "vm-a" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
-    expect(await screen.findByText("Showing the last available data.")).toBeInTheDocument();
+    expect(await screen.findByText(/Showing the last available data/)).toBeInTheDocument();
     expect(screen.getByText("The Azure connection lacks permission to collect this data.")).toBeInTheDocument();
     expect(screen.getAllByText("0 Percent").length).toBeGreaterThan(0);
     expect(refreshAzureMonitoring).toHaveBeenCalledWith(SUBSCRIPTIONS[0]);
+  });
+
+  it("shows saved trend, freshness, anomaly evidence, and bounded recommendation", async () => {
+    getAzureMonitoring.mockResolvedValue(snapshot("vm", {
+      resources: [{
+        id: "vm", name: "vm", type: "Microsoft.Compute/virtualMachines", location: "eastus",
+        health: "available", health_status: "synced", metrics_status: "synced",
+        metrics: [{
+          name: "Percentage CPU", unit: "Percent", aggregation: "average",
+          points: [{ timestamp: "2026-11-24T10:00:00Z", value: 10 }, { timestamp: "2026-11-24T11:00:00Z", value: 30 }],
+          analysis: { direction: "increasing", freshness: "recent", sample_count: 2, minimum: 10, average: 20, maximum: 30, anomaly: true },
+          recommendation: "Review the latest Percentage CPU sample in Azure Monitor; it differs materially from the preceding saved samples.",
+        }],
+      }],
+    }));
+    render(<AzureMonitoringWorkspace />);
+
+    expect(await screen.findByText("Increasing")).toBeInTheDocument();
+    expect(screen.getByText("Anomaly detected from the preceding saved samples.")).toBeInTheDocument();
+    expect(screen.getByText(/Review the latest Percentage CPU sample/)).toBeInTheDocument();
   });
 
   it("shows the inventory prerequisite to viewers without refresh or schedule controls", async () => {

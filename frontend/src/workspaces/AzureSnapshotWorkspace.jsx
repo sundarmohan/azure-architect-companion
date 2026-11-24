@@ -60,8 +60,12 @@ function SnapshotPanel({ subscription, canRefresh, loadSnapshot, refreshSnapshot
       {snapshot && <>
         <p role="status">{SNAPSHOT_STATUS[snapshot.status] || displayLabel(snapshot.status)}</p>
         {snapshot.failure_reason && snapshot.failure_reason !== snapshot.status && <p>{SNAPSHOT_STATUS[snapshot.failure_reason] || displayLabel(snapshot.failure_reason)}</p>}
+        {snapshot.failure_stage && snapshot.status !== "synced" && <p>Failed stage: {displayLabel(snapshot.failure_stage)}.</p>}
+        {snapshot.evidence_freshness && <p>Evidence freshness: {displayLabel(snapshot.evidence_freshness)}.</p>}
         <p>Last attempt {snapshotTime(snapshot.last_attempt_at)} · Last complete collection {snapshotTime(snapshot.last_success_at)}</p>
-        {snapshot.last_success_at && snapshot.status !== "synced" && <p>Showing the last available data.</p>}
+        {(snapshot.showing_retained_data || (snapshot.last_success_at && snapshot.status !== "synced")) &&
+          <><p>Showing the last available data.</p><p>Retained evidence does not confirm the current Azure state.</p></>}
+        {snapshot.correlation_id && snapshot.status !== "synced" && <p>Support reference: <code>{snapshot.correlation_id}</code></p>}
       </>}
       <div className="actions">
         <button className="dismiss" disabled={loading || refreshing} onClick={() => {

@@ -27,6 +27,8 @@ class ResourceGroup(BaseModel):
 class Resource(ResourceGroup):
     type: str
     resource_group: str | None
+    parent_azure_resource_id: str | None = None
+    properties: dict = Field(default_factory=dict)
 
 
 class InventoryRead(BaseModel):
@@ -68,6 +70,30 @@ def summarize_items(items, subscription_id, *, resources):
         if resources:
             summary["type"] = str(item.get("type") or "")
             summary["resource_group"] = parts[4] if len(parts) > 4 and parts[3].casefold() == "resourcegroups" else None
+            azure_type = summary["type"].casefold()
+            summary["parent_azure_resource_id"] = AzureResourceDiscoveryAdapter()._extract_parent_resource_id(
+                arm_id, azure_type,
+            )
+            raw = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+            allowlisted = {}
+            for key in ("serverFarmId", "virtualNetworkSubnetId"):
+                if isinstance(raw.get(key), str):
+                    allowlisted[key] = raw[key]
+            site_config = raw.get("siteConfig") if isinstance(raw.get("siteConfig"), dict) else {}
+            if isinstance(site_config.get("virtualNetworkSubnetId"), str):
+                allowlisted["siteConfig"] = {"virtualNetworkSubnetId": site_config["virtualNetworkSubnetId"]}
+            subnet = raw.get("subnet") if isinstance(raw.get("subnet"), dict) else {}
+            if isinstance(subnet.get("id"), str):
+                allowlisted["subnet"] = {"id": subnet["id"]}
+            connections = []
+            if isinstance(raw.get("privateLinkServiceConnections"), list):
+                for connection in raw["privateLinkServiceConnections"][:50]:
+                    props = connection.get("properties") if isinstance(connection, dict) else None
+                    if isinstance(props, dict) and isinstance(props.get("privateLinkServiceId"), str):
+                        connections.append({"properties": {"privateLinkServiceId": props["privateLinkServiceId"]}})
+            if connections:
+                allowlisted["privateLinkServiceConnections"] = connections
+            summary["properties"] = allowlisted
         indexed[arm_id.casefold()] = summary
     return [indexed[key] for key in sorted(indexed)]
 

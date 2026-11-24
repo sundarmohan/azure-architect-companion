@@ -80,18 +80,24 @@ const CATEGORY_LABELS = {
 
 const EDGE_STYLE_BY_TYPE = {
   connects_to: { stroke: "#3a64c8", strokeWidth: 2 },
+  traffic_flow: { stroke: "#3a64c8", strokeWidth: 3 },
   contains: { stroke: "#5b7f2a", strokeWidth: 2, strokeDasharray: "4 2" },
   depends_on: { stroke: "#8d4b12", strokeWidth: 2 },
+  hosted_on: { stroke: "#c15a12", strokeWidth: 3 },
   deployed_in: { stroke: "#7a3fa0", strokeWidth: 2, strokeDasharray: "2 3" },
   integrated_with: { stroke: "#1b7f74", strokeWidth: 2 },
+  private_link: { stroke: "#007d8a", strokeWidth: 3, strokeDasharray: "6 2" },
 };
 
 const RELATIONSHIP_PRIORITY = [
-  "connects_to",
-  "depends_on",
-  "integrated_with",
-  "deployed_in",
+  "hosted_on",
   "contains",
+  "integrated_with",
+  "private_link",
+  "traffic_flow",
+  "depends_on",
+  "deployed_in",
+  "connects_to",
 ];
 
 function AzureIcon({ type, className = "" }) {
@@ -415,7 +421,8 @@ export default function Designer({ architecture, onBack, scopedAzure = false, ca
     draft.name = selectedResource.name;
     draft.location = selectedResource.location || "";
     draft.sku = selectedResource.sku || draft.sku || "";
-    const planEdge = edges.find((edge) => edge.source === selectedResource.id && edge.label?.startsWith("depends_on"));
+    const planEdge = edges.find((edge) => edge.source === selectedResource.id &&
+      ["hosted_on", "depends_on"].some((type) => edge.label?.startsWith(type)));
     if (selectedResource.resource_type === "appservice") draft.plan_resource_id = planEdge?.target || draft.plan_resource_id || "";
     setConfigurationDraft(draft);
   }, [selectedResource?.id, resources, edges]);
@@ -431,9 +438,11 @@ export default function Designer({ architecture, onBack, scopedAzure = false, ca
   );
 
   function relationshipCandidates(sourceType, targetType, physicalParent = false) {
-    if (sourceType === "appservice" && targetType === "appserviceplan") return ["depends_on"];
+    if (sourceType === "appservice" && targetType === "appserviceplan") return ["hosted_on"];
     if (sourceType === "vnet" && targetType === "subnet") return ["contains"];
-    return physicalParent ? ["contains", "deployed_in", "integrated_with"] : ["depends_on", "integrated_with", "deployed_in", "contains", "connects_to"];
+    if (sourceType === "privateendpoint" && ["appservice", "storage", "sql", "keyvault"].includes(targetType)) return ["private_link"];
+    return physicalParent ? ["contains", "deployed_in", "integrated_with"] :
+      ["hosted_on", "integrated_with", "private_link", "traffic_flow", "depends_on", "deployed_in", "contains", "connects_to"];
   }
 
   const firstValidRelationship = useCallback(async (sourceId, targetId, physicalParent = false) => {
@@ -727,7 +736,7 @@ export default function Designer({ architecture, onBack, scopedAzure = false, ca
       });
       setResources((items) => items.concat(created));
       await synchronizeContext(created, flowPosition);
-      if (chosenPlan) await createRelationshipIfAllowed(created.id, chosenPlan.id, ["depends_on"]);
+      if (chosenPlan) await createRelationshipIfAllowed(created.id, chosenPlan.id, ["hosted_on"]);
       await load();
     } catch (e) {
       setError(e.message);
@@ -879,11 +888,9 @@ export default function Designer({ architecture, onBack, scopedAzure = false, ca
       setResources((items) => items.concat(allCreated));
 
       for (const dep of createdDeps) {
-        await createRelationshipIfAllowed(baseResource.id, dep.id, [
-          "depends_on",
-          "connects_to",
-          "integrated_with",
-        ]);
+        await createRelationshipIfAllowed(
+          baseResource.id, dep.id, relationshipCandidates(baseResource.resource_type, dep.resource_type)
+        );
       }
 
       if (baseParent) {
@@ -924,7 +931,7 @@ export default function Designer({ architecture, onBack, scopedAzure = false, ca
         properties: { plan_resource_id: plan.id },
       });
       setResources((items) => items.concat(created));
-      await createRelationshipIfAllowed(created.id, plan.id, ["depends_on"]);
+      await createRelationshipIfAllowed(created.id, plan.id, ["hosted_on"]);
       setPlanSelectionPrompt(null);
       await load();
     } catch (e) {
@@ -1203,20 +1210,21 @@ export default function Designer({ architecture, onBack, scopedAzure = false, ca
       await updateResource(architecture.id, selectedResource.id, update);
 
       if (selectedResource.resource_type === "appservice" && configurationDraft.plan_resource_id) {
-        const currentPlanEdges = edges.filter((edge) => edge.source === selectedResource.id && edge.label?.startsWith("depends_on"));
+        const currentPlanEdges = edges.filter((edge) => edge.source === selectedResource.id &&
+          ["hosted_on", "depends_on"].some((type) => edge.label?.startsWith(type)));
         const currentPlanId = currentPlanEdges[0]?.target;
         if (currentPlanId !== configurationDraft.plan_resource_id) {
           await Promise.all(currentPlanEdges.map((edge) => deleteRelationship(architecture.id, edge.id)));
           const validation = await validateRelationship(architecture.id, {
             source_resource_id: selectedResource.id,
             target_resource_id: configurationDraft.plan_resource_id,
-            relationship_type: "depends_on",
+            relationship_type: "hosted_on",
           });
           if (!validation.valid) throw new Error(validation.reason || "The selected App Service Plan is not compatible");
           await createRelationship(architecture.id, {
             source_resource_id: selectedResource.id,
             target_resource_id: configurationDraft.plan_resource_id,
-            relationship_type: "depends_on",
+            relationship_type: "hosted_on",
           });
         }
       }

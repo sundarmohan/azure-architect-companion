@@ -77,6 +77,33 @@ function configurationValue(value) {
   return String(value);
 }
 
+function NetworkPosture({ resources, links }) {
+  const detailed = resources.filter((resource) => !resource.properties?.topology_context);
+  const protectedIds = new Set(links.filter(({ kind }) => kind === "protected_by").map(({ source }) => source));
+  const subnets = detailed.filter(({ type }) => type?.toLowerCase() === "microsoft.network/virtualnetworks/subnets");
+  const publicAddresses = detailed.filter(({ type, properties }) =>
+    type?.toLowerCase() === "microsoft.network/publicipaddresses" && properties?.assigned_addresses?.length).length;
+  const internetRules = detailed.reduce((total, resource) =>
+    total + Number(resource.properties?.internet_inbound_allow_rules || 0), 0);
+  const routes = detailed.reduce((total, resource) => total + (resource.properties?.routes?.length || 0), 0);
+  const cards = [
+    ["Detailed resources", detailed.length],
+    ["Assigned public IPs", publicAddresses],
+    ["Internet inbound allow rules", internetRules],
+    ["Subnets without observed NSG link", subnets.filter(({ id }) => !protectedIds.has(id)).length],
+    ["Private Link targets", links.filter(({ kind }) => kind === "private_link_to").length],
+    ["Configured routes", routes],
+    ["Private DNS VNet links", links.filter(({ kind }) => kind === "dns_zone_link").length],
+  ];
+  return <section className="card account-form">
+    <h2>Network posture from collected configuration</h2>
+    <p><strong>Connectivity is not validated.</strong> These counts describe saved Azure configuration, not effective reachability or traffic flow.</p>
+    <div className="platform-grid">{cards.map(([label, value]) => <article className="platform-card" key={label}>
+      <h3>{label}</h3><div className="platform-value">{value}</div>
+    </article>)}</div>
+  </section>;
+}
+
 function NetworkResources({ snapshot }) {
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -100,13 +127,14 @@ function NetworkResources({ snapshot }) {
     {resources.length > 0 && <label>Filter network resources<input value={filter}
       onChange={(event) => setFilter(event.target.value)} placeholder="Name, resource type, or location" /></label>}
     {matching.length > 0 && <label>Resource<select value={selected.id} onChange={(event) => setSelectedId(event.target.value)}>
-      {matching.map((resource) => <option key={resource.id} value={resource.id}>{resource.name} · {resource.type}</option>)}
+      {matching.map((resource) => <option key={resource.id} value={resource.id}>{resource.name} · {resource.type}{resource.properties?.topology_context ? " · inventory context" : ""}</option>)}
     </select></label>}
     {selected ? <div className="account-form">
       <h3>{selected.name}</h3>
       <dl className="design-meta">
         <div><dt>Resource type</dt><dd>{selected.type || "Unknown"}</dd></div>
         <div><dt>Location</dt><dd>{selected.location || "Unknown"}</dd></div>
+        <div><dt>Evidence</dt><dd>{selected.properties?.topology_context ? "Saved inventory reference" : "Azure configuration detail"}</dd></div>
       </dl>
       <details className="network-properties">
         <summary>Azure configuration</summary>
@@ -127,6 +155,9 @@ export default function AzureNetworkWorkspace({ canRefresh }) {
   return <AzureSnapshotWorkspace title="Network Intelligence"
     description="Inspect Azure network configuration and relationships from the selected subscription."
     canRefresh={canRefresh} loadSnapshot={getAzureNetwork} refreshSnapshot={refreshAzureNetwork}>
-    {(snapshot) => snapshot && <NetworkResources snapshot={snapshot} />}
+    {(snapshot) => snapshot && <>
+      <NetworkPosture resources={snapshot.resources || []} links={snapshot.links || []} />
+      <NetworkResources snapshot={snapshot} />
+    </>}
   </AzureSnapshotWorkspace>;
 }

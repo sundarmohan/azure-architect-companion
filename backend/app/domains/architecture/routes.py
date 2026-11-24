@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.access.routes import get_db
+from app.domains.access.models import AzureInventorySnapshot
 from app.domains.architecture.models import Architecture, ArchitectureResource, ArchitectureRelationship, AzureSubscription, AzureResourceGroup, ArchitectureDependency
 from app.domains.architecture.catalog import (
     AZURE_RESOURCE_CATALOG,
@@ -24,6 +25,7 @@ from app.domains.cost.schemas import (
 )
 from app.domains.cost.service import CostEstimationService
 from app.domains.monitoring.service import MonitoringService
+from app.domains.monitoring.observation_models import AzureObservation
 from app.domains.monitoring.alert_incident_workflow import MonitoringAlertIncidentWorkflow
 from app.domains.monitoring.schemas import (
     ArchitectureMonitoringSummaryRead,
@@ -536,7 +538,89 @@ async def discover_azure_resources(
         )
 
     adapter = AzureResourceDiscoveryAdapter()
-    discovered = await adapter.discover_subscription_resources(subscription_id=subscription.subscription_id)
+    client_id = db.info.get("client_id")
+    retained_inventory = False
+    if client_id is None:
+        # The isolated legacy test application has no client workspace. Production
+        # discovery always consumes the client-scoped saved inventory below.
+        discovered = await adapter.discover_subscription_resources(subscription_id=subscription.subscription_id)
+    else:
+        try:
+            external_subscription_id = UUID(subscription.subscription_id)
+        except ValueError:
+            return AzureDiscoveryRead(
+                success=False, connection_state="configuration_error",
+                message="The architecture subscription ID is not a valid Azure subscription identifier.",
+                architecture_id=architecture_id, subscription_id=subscription.id,
+            )
+        snapshot = await db.get(AzureInventorySnapshot, (client_id, external_subscription_id))
+        if snapshot is None or snapshot.last_success_at is None:
+            return AzureDiscoveryRead(
+                success=False, connection_state="inventory_required",
+                message="Refresh Azure Inventory before synchronizing this architecture.",
+                architecture_id=architecture_id, subscription_id=subscription.id,
+            )
+        normalized_resources = []
+        normalized_ids = set()
+        for row in snapshot.resources:
+            normalized = adapter._normalize_resource({
+                "id": row.get("id"), "name": row.get("name"), "type": row.get("type"),
+                "location": row.get("location"), "properties": row.get("properties", {}),
+            }, subscription.subscription_id)
+            if normalized is not None:
+                normalized["parent_azure_resource_id"] = (
+                    row.get("parent_azure_resource_id") or normalized.get("parent_azure_resource_id")
+                )
+                normalized_resources.append(normalized)
+                normalized_ids.add(normalized["azure_resource_id"].casefold())
+        network = await db.get(AzureObservation, (client_id, external_subscription_id, "network"))
+        network_payload = network.payload if network and network.last_success_at and isinstance(network.payload, dict) else {}
+        for row in network_payload.get("resources", []):
+            if not isinstance(row, dict) or str(row.get("id") or "").casefold() in normalized_ids:
+                continue
+            normalized = adapter._normalize_resource({
+                "id": row.get("id"), "name": row.get("name"), "type": row.get("type"),
+                "location": row.get("location"), "properties": {},
+            }, subscription.subscription_id)
+            if normalized is not None:
+                normalized_resources.append(normalized)
+                normalized_ids.add(normalized["azure_resource_id"].casefold())
+        relationship_types = {
+            "contains": ("contains", False),
+            "hosted_on": ("hosted_on", False),
+            "integrates_with_subnet": ("integrated_with", False),
+            "attached_to_subnet": ("contains", True),
+            "private_link_to": ("private_link", False),
+        }
+        relationships = []
+        for link in network_payload.get("links", []):
+            mapping = relationship_types.get(link.get("kind")) if isinstance(link, dict) else None
+            if not mapping:
+                continue
+            relationship_type, reverse = mapping
+            source, target = link.get("source"), link.get("target")
+            if reverse:
+                source, target = target, source
+            if (isinstance(source, str) and isinstance(target, str)
+                    and source.casefold() in normalized_ids and target.casefold() in normalized_ids):
+                relationships.append({
+                    "source_azure_resource_id": source, "target_azure_resource_id": target,
+                    "relationship_type": relationship_type, "evidence": f"network_snapshot.{link.get('kind')}",
+                })
+        discovered = {
+            "success": True,
+            "connection_state": "inventory_retained" if snapshot.status != "synced" else "inventory_synced",
+            "resource_groups": [{
+                "azure_resource_id": row.get("id"), "name": row.get("name"),
+                "location": row.get("location"), "subscription_id": subscription.subscription_id,
+                "tags": {}, "properties": {},
+            } for row in snapshot.resource_groups],
+            "resources": normalized_resources,
+            "relationships": relationships,
+            "unsupported_resources": max(0, len(snapshot.resources) - len(normalized_resources)),
+            "skipped_without_group": 0,
+        }
+        retained_inventory = snapshot.status != "synced"
 
     if not discovered.get("success"):
         return AzureDiscoveryRead(
@@ -555,6 +639,7 @@ async def discover_azure_resources(
         db=db,
         resource_model=ArchitectureResource,
         resource_group_model=AzureResourceGroup,
+        relationship_model=ArchitectureRelationship,
     )
 
     discovered_subscription = discovered.get("subscription") if isinstance(discovered.get("subscription"), dict) else {}
@@ -580,7 +665,8 @@ async def discover_azure_resources(
     return AzureDiscoveryRead(
         success=True,
         connection_state="configured_connected",
-        message="Discovery completed",
+        message=("Architecture synchronized from retained inventory; refresh Azure Inventory for current evidence."
+                 if retained_inventory else "Architecture synchronized from the latest complete Azure Inventory."),
         architecture_id=architecture_id,
         subscription_id=subscription.id,
         discovered_subscription_id=discovered_subscription_id,
@@ -593,6 +679,9 @@ async def discover_azure_resources(
         resources_created=summary["resources_created"],
         resources_updated=summary["resources_updated"],
         hierarchy_links_updated=summary["hierarchy_links_updated"],
+        relationships_created=summary["relationships_created"],
+        relationships_updated=summary["relationships_updated"],
+        unresolved_relationships=summary["unresolved_relationships"],
         unsupported_resources=summary["unsupported_resources"],
         skipped_without_group=summary["skipped_without_group"],
         normalized_resources=summary["normalized_resources"],

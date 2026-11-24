@@ -197,15 +197,14 @@ def test_observations_and_schedules_are_scoped(monkeypatch):
         assert evidence["resource_id"] == resource["id"] and evidence["observed_at"] == "2026-01-01T00:00:00Z"
         assert evidence["evidence"] == ["Recorded Azure setting"]
         linked_finding = client.get(security, headers=first_headers).json()["findings"][0]
-        assert linked_finding["incident_links"] == [{
-            "id": incident["id"], "status": "investigating", "owner": "Cloud operations",
-            "linked_at": evidence["linked_at"],
-        }]
         imported_detail = client.get(f"/api/assessments/{assessment.json()['id']}", headers=first_headers).json()
-        assert imported_detail["findings"][0]["incident_links"] == [{
-            "id": incident["id"], "status": "investigating", "owner": "Cloud operations",
-            "linked_at": evidence["linked_at"],
-        }]
+        for finding in (linked_finding, imported_detail["findings"][0]):
+            assert len(finding["incident_links"]) == 1
+            link = finding["incident_links"][0]
+            assert link["id"] == incident["id"]
+            assert link["status"] == "investigating"
+            assert link["owner"] == "Cloud operations"
+            assert datetime.fromisoformat(link["linked_at"]) == datetime.fromisoformat(evidence["linked_at"])
         security_title = "Changed after evidence linking"
         refreshed_security = client.post(security + "/refresh", headers=first_headers).json()
         assert refreshed_security["findings"][0]["title"] == security_title

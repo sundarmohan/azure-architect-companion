@@ -22,7 +22,7 @@ import "./styles/observability.css";
 export default function App() {
   const [user, setUser] = useState(null);
   const [clientId, setClientId] = useState("");
-  const [workspace, setWorkspace] = useState("architecture");
+  const [workspace, setWorkspace] = useState("overview");
   const [checking, setChecking] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
   const [notice, setNotice] = useState("");
@@ -43,7 +43,7 @@ export default function App() {
     setApiSession();
     setClientId("");
     setUser(null);
-    setWorkspace("architecture");
+    setWorkspace("overview");
     setNotice(message);
   }, []);
 
@@ -106,9 +106,13 @@ export default function App() {
         <div className="brand">MONITORAI PLATFORM</div>
         <nav className="nav-list" aria-label="Workspace navigation">
           {activeClient && <>
+            <span className="nav-section">Priorities</span>
             <button className={`nav-item ${workspace === "overview" ? "active" : ""}`} onClick={() => setWorkspace("overview")}>Overview</button>
+            <span className="nav-section">Design and Azure</span>
             <button className={`nav-item ${workspace === "architecture" ? "active" : ""}`} onClick={() => setWorkspace("architecture")}>Architecture Studio</button>
             <button className={`nav-item ${workspace === "inventory" ? "active" : ""}`} onClick={() => setWorkspace("inventory")}>Azure Inventory</button>
+            <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
+            <span className="nav-section">Operate and protect</span>
             <button className={`nav-item ${workspace === "monitoring" ? "active" : ""}`} onClick={() => setWorkspace("monitoring")}>Monitoring</button>
             <button className={`nav-item ${workspace === "network" ? "active" : ""}`} onClick={() => setWorkspace("network")}>Network</button>
             <button className={`nav-item ${workspace === "security" ? "active" : ""}`} onClick={() => setWorkspace("security")}>Security</button>
@@ -117,8 +121,8 @@ export default function App() {
             <button className={`nav-item ${workspace === "cost" ? "active" : ""}`} onClick={() => setWorkspace("cost")}>Cost</button>
             <button className={`nav-item ${workspace === "devsecops" ? "active" : ""}`} onClick={() => setWorkspace("devsecops")}>DevSecOps</button>
             <button className={`nav-item ${workspace === "backup" ? "active" : ""}`} onClick={() => setWorkspace("backup")}>Backup</button>
+            <span className="nav-section">Evidence and reporting</span>
             <button className={`nav-item ${workspace === "reports" ? "active" : ""}`} onClick={() => setWorkspace("reports")}>Reports</button>
-            <button className={`nav-item ${workspace === "azure" ? "active" : ""}`} onClick={() => setWorkspace("azure")}>Azure Connection</button>
           </>}
           <button className={`nav-item ${workspace === "account" ? "active" : ""}`} onClick={() => setWorkspace("account")}>Account</button>
         </nav>
@@ -131,6 +135,7 @@ export default function App() {
               ))}
             </select>
           </label>}
+          {activeClient && <small>Role {activeClient.role}</small>}
           <button onClick={signOut} disabled={signingOut}>Sign out</button>
           <small title={build?.build?.built_at || "Build time unknown"}>
             Version {build?.version || "unknown"} · {build?.build?.commit?.slice(0, 12) || "revision unknown"}

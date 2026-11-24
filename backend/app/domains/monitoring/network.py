@@ -33,10 +33,13 @@ API_VERSIONS = {
     "dnszones": "2018-05-01",
     "privatednszones": PRIVATE_DNS_API,
 }
+EXTRA_RESOURCE_API_VERSIONS = {"microsoft.web/sites": "2024-11-01"}
 LIMITATIONS = (
     "Topology includes only relationships between collected resources in the selected subscription.",
     "Exposure indicators reflect Azure configuration. They do not establish end-to-end reachability.",
     "Routes and security rules show configured intent. Effective routes, effective rules, firewall policy rules, DNS records, and flow logs are outside this snapshot.",
+    "App Service VNet integration is outbound integration; it does not establish private inbound access.",
+    "Private Endpoint approval and custom DNS configuration do not prove that clients resolve or reach the private address.",
 )
 ARM_SEGMENT = re.compile(r"[\w().-]{1,260}", re.UNICODE)
 
@@ -50,7 +53,7 @@ class NetworkCollection:
     limitations: list[str] = field(default_factory=list)
 
 
-def scoped_network_id(value, subscription_id: str) -> str | None:
+def scoped_resource_id(value, subscription_id: str) -> str | None:
     if not isinstance(value, str) or len(value) > 1024 or not value.startswith("/"):
         return None
     parts = value[1:].split("/")
@@ -58,11 +61,18 @@ def scoped_network_id(value, subscription_id: str) -> str | None:
         return None
     if parts[1].casefold() != subscription_id or parts[2].casefold() != "resourcegroups":
         return None
-    if [part.casefold() for part in parts[4:6]] != ["providers", "microsoft.network"]:
+    if parts[4].casefold() != "providers":
         return None
     if any(not ARM_SEGMENT.fullmatch(part) or part in {".", ".."} for part in parts):
         return None
     return value
+
+
+def scoped_network_id(value, subscription_id: str) -> str | None:
+    scoped = scoped_resource_id(value, subscription_id)
+    if not scoped:
+        return None
+    return scoped if scoped[1:].split("/")[5].casefold() == "microsoft.network" else None
 
 
 def obj(value):
@@ -124,11 +134,28 @@ def child_row(parent, child, child_type, subscription_id):
 
 def subnet_facts(props):
     prefixes = [*strings(props.get("addressPrefixes")), props.get("addressPrefix")]
-    return {
+    delegations = []
+    for delegation in rows(props.get("delegations")):
+        details = obj(delegation.get("properties"))
+        delegations.append({
+            **string_fields(delegation, name="name"),
+            **string_fields(details, service_name="serviceName"),
+            "actions": strings(details.get("actions")),
+        })
+    endpoints = [{
+        **string_fields(endpoint, service="service"),
+        "locations": strings(endpoint.get("locations")),
+    } for endpoint in rows(props.get("serviceEndpoints"))]
+    facts = {
         "address_prefixes": parsed_addresses(prefixes, ip_network),
+        "delegations": delegations,
+        "service_endpoints": endpoints,
         **string_fields(props, private_endpoint_policies="privateEndpointNetworkPolicies",
-                        private_link_service_policies="privateLinkServiceNetworkPolicies"),
+                        private_link_service_policies="privateLinkServiceNetworkPolicies", purpose="purpose"),
     }
+    if isinstance(props.get("defaultOutboundAccess"), bool):
+        facts["default_outbound_access"] = props["defaultOutboundAccess"]
+    return facts
 
 
 def security_rules(props):
@@ -173,6 +200,11 @@ def project_network_resource(item, payload, kind, subscription_id):
         if target_id:
             links.append((source, target_id, relation))
 
+    def link_resource(source, target, relation):
+        target_id = scoped_resource_id(target, subscription_id)
+        if target_id:
+            links.append((source, target_id, relation))
+
     def references(source, details, fields):
         for key, relation in fields:
             link(source, reference(details.get(key)), relation)
@@ -192,6 +224,8 @@ def project_network_resource(item, payload, kind, subscription_id):
                 ("networkSecurityGroup", "protected_by"), ("routeTable", "uses_route_table"),
                 ("natGateway", "uses_nat_gateway"),
             ))
+            for private_endpoint in rows(details.get("privateEndpoints")):
+                link(reference(private_endpoint), subnet["id"], "attached_to_subnet")
         for peering in rows(props.get("virtualNetworkPeerings")):
             detail = obj(peering.get("properties"))
             relation = "peered_with" if str(detail.get("peeringState", "")).casefold() == "connected" else "peering_configured"
@@ -205,10 +239,16 @@ def project_network_resource(item, payload, kind, subscription_id):
                 and rule.get("access", "").casefold() == "allow" for rule in rules
             ),
         }
+        for subnet in rows(props.get("subnets")):
+            link(reference(subnet), resource_id, "protected_by")
+        for interface in rows(props.get("networkInterfaces")):
+            link(reference(interface), resource_id, "protected_by")
     elif kind == "routetables":
         facts["routes"] = route_rows(props)
         if isinstance(props.get("disableBgpRoutePropagation"), bool):
             facts["bgp_route_propagation_enabled"] = not props["disableBgpRoutePropagation"]
+        for subnet in rows(props.get("subnets")):
+            link(reference(subnet), resource_id, "uses_route_table")
     elif kind == "publicipaddresses":
         facts = {
             **string_fields(props, allocation="publicIPAllocationMethod", version="publicIPAddressVersion"),
@@ -225,6 +265,34 @@ def project_network_resource(item, payload, kind, subscription_id):
             facts["record_set_count"] = count
         if kind == "dnszones":
             facts["name_servers"] = strings(props.get("nameServers"))
+    elif kind == "microsoft.web/sites":
+        facts = string_fields(
+            props, state="state", default_hostname="defaultHostName", public_network_access="publicNetworkAccess",
+        )
+        if isinstance(props.get("httpsOnly"), bool):
+            facts["https_only"] = props["httpsOnly"]
+        link_resource(resource_id, props.get("serverFarmId"), "hosted_on")
+        link_resource(resource_id, props.get("virtualNetworkSubnetId"), "integrates_with_subnet")
+    elif kind == "privateendpoints":
+        references(resource_id, props, (("subnet", "attached_to_subnet"),))
+        for interface in rows(props.get("networkInterfaces")):
+            link(resource_id, reference(interface), "uses_network_interface")
+        connections = []
+        for field_name in ("privateLinkServiceConnections", "manualPrivateLinkServiceConnections"):
+            for connection in rows(props.get(field_name)):
+                details = obj(connection.get("properties"))
+                state = obj(details.get("privateLinkServiceConnectionState"))
+                connections.append({
+                    **string_fields(connection, name="name"),
+                    **string_fields(state, status="status"),
+                    "group_ids": strings(details.get("groupIds")),
+                })
+                link_resource(resource_id, details.get("privateLinkServiceId"), "private_link_to")
+        custom_dns = [{
+            **string_fields(config, fqdn="fqdn"),
+            "ip_addresses": parsed_addresses(config.get("ipAddresses"), ip_address),
+        } for config in rows(props.get("customDnsConfigs"))]
+        facts = {"connections": connections, "custom_dns": custom_dns}
     elif kind == "applicationgatewaywebapplicationfirewallpolicies":
         facts = string_fields(obj(props.get("policySettings")), state="state", mode="mode")
     else:
@@ -261,32 +329,39 @@ def project_network_resource(item, payload, kind, subscription_id):
                 facts["waf_enabled"] = waf["enabled"]
         if kind in {"azurefirewalls", "firewallpolicies", "applicationgateways", "loadbalancers"}:
             facts.update(string_fields(obj(payload.get("sku")), sku="name", tier="tier"))
-    return [resource_row(item, f"microsoft.network/{kind}", facts), *children], links
+    resource_type = kind if kind.startswith("microsoft.") else f"microsoft.network/{kind}"
+    return [resource_row(item, resource_type, facts), *children], links
 
 
 async def collect_network(subscription_id: str, resources: list[dict], http: httpx.AsyncClient,
                           headers: dict[str, str]) -> NetworkCollection:
     subscription_id = str(UUID(subscription_id))
     candidates = {}
+    inventory_records = {}
     ignored = 0
     for resource in resources:
-        kind = str(resource.get("type") or "").casefold().removeprefix("microsoft.network/")
-        if kind not in API_VERSIONS:
+        resource_type = str(resource.get("type") or "").casefold()
+        resource_id = scoped_resource_id(resource.get("id"), subscription_id)
+        if resource_id:
+            inventory_records[resource_id.casefold()] = resource
+        kind = resource_type.removeprefix("microsoft.network/") if resource_type.startswith("microsoft.network/") else resource_type
+        api_version = API_VERSIONS.get(kind) or EXTRA_RESOURCE_API_VERSIONS.get(resource_type)
+        if not api_version:
             continue
-        resource_id = scoped_network_id(resource.get("id"), subscription_id)
-        if not resource_id or len(resource_id.split("/")) != 9 or resource_id.split("/")[-2].casefold() != kind:
+        if (not resource_id or len(resource_id.split("/")) != 9
+                or resource_id.split("/")[-2].casefold() != kind.split("/")[-1]):
             ignored += 1
             continue
-        candidates[resource_id.casefold()] = (resource, kind)
+        candidates[resource_id.casefold()] = (resource, kind, api_version)
 
     limiter = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     pager = AzureResourceDiscoveryAdapter()
 
-    async def collect(item, kind):
+    async def collect(item, kind, api_version):
         async with limiter:
             try:
                 response = await http.get(
-                    f"{ARM}{item['id']}", params={"api-version": API_VERSIONS[kind]},
+                    f"{ARM}{item['id']}", params={"api-version": api_version},
                     headers=headers, follow_redirects=False,
                 )
                 if response.status_code != 200:
@@ -321,6 +396,17 @@ async def collect_network(subscription_id: str, resources: list[dict], http: htt
     selected = sorted(candidates)[:RESOURCE_LIMIT]
     discovered = await asyncio.gather(*(collect(*candidates[key]) for key in selected))
     records = {item["id"].casefold(): item for result, _, _ in discovered for item in result}
+    for _, links, _ in discovered:
+        for source, target, _relation in links:
+            for endpoint in (source, target):
+                key = endpoint.casefold()
+                inventory = inventory_records.get(key)
+                if key not in records and inventory:
+                    records[key] = {
+                        "id": inventory["id"], "name": str(inventory.get("name") or ""),
+                        "type": str(inventory.get("type") or ""), "location": str(inventory.get("location") or ""),
+                        "properties": {"topology_context": True, "evidence_source": "saved_inventory"},
+                    }
     edges = {
         (records[source.casefold()]["id"], records[target.casefold()]["id"], relation)
         for _, links, _ in discovered for source, target, relation in links
@@ -337,5 +423,6 @@ async def collect_network(subscription_id: str, resources: list[dict], http: htt
     if failures:
         limitations.append(f"Azure did not return all requested details for {sum(failures.values())} network resource(s).")
     return NetworkCollection(status, reason, [records[key] for key in sorted(records)],
-                             [{"source": source, "target": target, "kind": relation}
+                             [{"source": source, "target": target, "kind": relation,
+                               "evidence_source": "azure_configuration", "connectivity": "not_validated"}
                               for source, target, relation in sorted(edges)], limitations)

@@ -320,6 +320,58 @@ class AzureResourceDiscoveryAdapter:
         return f"Azure API request failed with status {response.status_code}"
 
 
+def azure_relationship_hints(resource: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract allowlisted Azure relationship evidence without retaining raw provider payloads."""
+    resource_id = str(resource.get("azure_resource_id") or "").strip()
+    resource_type = str(resource.get("resource_type") or "").strip().lower()
+    properties = resource.get("properties") if isinstance(resource.get("properties"), dict) else {}
+
+    def valid_id(value: Any) -> str | None:
+        if isinstance(value, dict):
+            value = value.get("id")
+        candidate = str(value or "").strip()
+        if (not candidate.casefold().startswith("/subscriptions/") or len(candidate) > 2048
+                or any(part in {".", ".."} for part in candidate.split("/"))):
+            return None
+        return candidate
+
+    hints: list[dict[str, str]] = []
+
+    def add(source: Any, target: Any, relationship_type: str, evidence: str):
+        source_id, target_id = valid_id(source), valid_id(target)
+        if source_id and target_id and source_id.casefold() != target_id.casefold():
+            hints.append({
+                "source_azure_resource_id": source_id,
+                "target_azure_resource_id": target_id,
+                "relationship_type": relationship_type,
+                "evidence": evidence,
+            })
+
+    if resource_type == "appservice":
+        add(resource_id, properties.get("serverFarmId"), "hosted_on", "properties.serverFarmId")
+        site_config = properties.get("siteConfig") if isinstance(properties.get("siteConfig"), dict) else {}
+        subnet_id = properties.get("virtualNetworkSubnetId") or site_config.get("virtualNetworkSubnetId")
+        add(resource_id, subnet_id, "integrated_with", "properties.virtualNetworkSubnetId")
+    elif resource_type == "privateendpoint":
+        add(properties.get("subnet"), resource_id, "contains", "properties.subnet.id")
+        connections = properties.get("privateLinkServiceConnections")
+        if isinstance(connections, list):
+            for connection in connections[:50]:
+                connection_properties = connection.get("properties") if isinstance(connection, dict) else None
+                if isinstance(connection_properties, dict):
+                    add(resource_id, connection_properties.get("privateLinkServiceId"), "private_link",
+                        "properties.privateLinkServiceConnections.privateLinkServiceId")
+
+    parent_id = resource.get("parent_azure_resource_id")
+    if resource_type == "subnet":
+        add(parent_id, resource_id, "contains", "resource_id_parent")
+
+    return list({
+        (item["source_azure_resource_id"].casefold(), item["target_azure_resource_id"].casefold(),
+         item["relationship_type"]): item for item in hints
+    }.values())
+
+
 class AzureResourceDiscoveryService:
     async def sync_discovered_resources(
         self,
@@ -330,6 +382,7 @@ class AzureResourceDiscoveryService:
         db: Any,
         resource_model: Any,
         resource_group_model: Any,
+        relationship_model: Any | None = None,
     ) -> dict[str, Any]:
         from sqlalchemy import select
 
@@ -437,6 +490,7 @@ class AzureResourceDiscoveryService:
         resources_updated = 0
         hierarchy_links_updated = 0
         normalized_resources: list[dict[str, Any]] = []
+        pending_relationships: list[dict[str, str]] = []
 
         discovered_resources = discovered.get("resources") or []
         pending_parent_links: list[tuple[str, str]] = []
@@ -465,6 +519,9 @@ class AzureResourceDiscoveryService:
             )
             if discovered_resource.get("parent_azure_resource_id"):
                 properties["parent_azure_resource_id"] = discovered_resource.get("parent_azure_resource_id")
+            relationship_hints = azure_relationship_hints(discovered_resource)
+            properties["azure_relationship_hints"] = relationship_hints
+            pending_relationships.extend(relationship_hints)
 
             if existing_resource is None:
                 existing_resource = resource_model(
@@ -509,6 +566,13 @@ class AzureResourceDiscoveryService:
             if parent_azure_resource_id:
                 pending_parent_links.append((azure_resource_id, parent_azure_resource_id))
 
+        for hint in discovered.get("relationships") or []:
+            if (isinstance(hint, dict)
+                    and all(isinstance(hint.get(key), str) for key in (
+                        "source_azure_resource_id", "target_azure_resource_id", "relationship_type", "evidence"
+                    ))):
+                pending_relationships.append(hint)
+
         for child_azure_id, parent_azure_id in pending_parent_links:
             child = resources_by_azure.get(child_azure_id.lower())
             parent = resources_by_azure.get(parent_azure_id.lower())
@@ -520,6 +584,49 @@ class AzureResourceDiscoveryService:
                 child.parent_resource_id = parent.id
                 hierarchy_links_updated += 1
 
+        relationships_created = 0
+        relationships_updated = 0
+        unresolved_relationships = 0
+        if relationship_model is not None and pending_relationships:
+            await db.flush()
+            relationship_result = await db.execute(
+                select(relationship_model).where(relationship_model.architecture_id == architecture_id)
+            )
+            existing_relationships = {
+                (row.source_resource_id, row.target_resource_id, row.relationship_type): row
+                for row in relationship_result.scalars().all()
+            }
+            for hint in pending_relationships:
+                source = resources_by_azure.get(hint["source_azure_resource_id"].casefold())
+                target = resources_by_azure.get(hint["target_azure_resource_id"].casefold())
+                if source is None or target is None:
+                    unresolved_relationships += 1
+                    continue
+                key = (source.id, target.id, hint["relationship_type"])
+                evidence = {
+                    "source": "azure_inventory",
+                    "evidence": hint["evidence"],
+                    "discovery_state": "observed",
+                    "discovery_last_seen_at": now_iso,
+                }
+                existing = existing_relationships.get(key)
+                if existing is None:
+                    existing = relationship_model(
+                        architecture_id=architecture_id,
+                        source_resource_id=source.id,
+                        target_resource_id=target.id,
+                        relationship_type=hint["relationship_type"],
+                        properties=evidence,
+                    )
+                    db.add(existing)
+                    existing_relationships[key] = existing
+                    relationships_created += 1
+                else:
+                    properties = dict(existing.properties) if isinstance(existing.properties, dict) else {}
+                    properties.update(evidence)
+                    existing.properties = properties
+                    relationships_updated += 1
+
         await db.commit()
 
         return {
@@ -530,6 +637,9 @@ class AzureResourceDiscoveryService:
             "resources_created": resources_created,
             "resources_updated": resources_updated,
             "hierarchy_links_updated": hierarchy_links_updated,
+            "relationships_created": relationships_created,
+            "relationships_updated": relationships_updated,
+            "unresolved_relationships": unresolved_relationships,
             "unsupported_resources": int(discovered.get("unsupported_resources") or 0),
             "skipped_without_group": int(discovered.get("skipped_without_group") or 0),
             "normalized_resources": normalized_resources,

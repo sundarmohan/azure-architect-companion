@@ -12,6 +12,7 @@ from .azure_monitor_adapter import AzureMonitorAdapter
 
 ARM = "https://management.azure.com"
 RESOURCE_HEALTH_API_VERSION = "2025-05-01"
+METRIC_DEFINITIONS_API_VERSION = "2018-01-01"
 MAX_RESOURCES = 40
 CONCURRENCY = 8
 ARM_RESOURCE_ID = re.compile(
@@ -61,7 +62,57 @@ def summarize_states(states):
     return next(iter(failures))
 
 
-def metrics_for_request(payload, names, aggregation):
+def metric_definitions(payload):
+    """Return Azure metric names and supported aggregations from a bounded response."""
+    rows = payload.get("value")
+    if not isinstance(rows, list):
+        return None
+    definitions = {}
+    for row in rows[:1000]:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), dict):
+            continue
+        name = str(row["name"].get("value") or "").strip()
+        if not name:
+            continue
+        aggregations = row.get("supportedAggregationTypes")
+        definitions[name.casefold()] = {
+            str(value).casefold() for value in aggregations if isinstance(value, str)
+        } if isinstance(aggregations, list) else set()
+    return definitions
+
+
+def metric_analysis(points, collected_at):
+    """Derive trend, freshness, and anomaly evidence only from saved numeric points."""
+    if not points:
+        return None
+    values = [float(point["value"]) for point in points]
+    latest_at = datetime.fromisoformat(points[-1]["timestamp"])
+    age_minutes = max(0, int((collected_at - latest_at).total_seconds() / 60))
+    baseline = values[:-1]
+    anomaly = False
+    if len(baseline) >= 4:
+        mean = sum(baseline) / len(baseline)
+        variance = sum((value - mean) ** 2 for value in baseline) / len(baseline)
+        deviation = math.sqrt(variance)
+        anomaly = abs(values[-1] - mean) > (3 * deviation if deviation else max(abs(mean) * 0.05, 1e-9))
+    delta = values[-1] - values[0]
+    tolerance = max(abs(values[0]) * 0.05, 1e-9)
+    direction = "increasing" if delta > tolerance else "decreasing" if delta < -tolerance else "stable"
+    return {
+        "sample_count": len(values),
+        "minimum": min(values),
+        "maximum": max(values),
+        "average": sum(values) / len(values),
+        "change": delta,
+        "direction": direction,
+        "latest_sample_at": points[-1]["timestamp"],
+        "freshness": "recent" if age_minutes <= 120 else "stale",
+        "sample_age_minutes": age_minutes,
+        "anomaly": anomaly,
+    }
+
+
+def metrics_for_request(payload, names, aggregation, collected_at):
     raw = payload.get("value")
     if not isinstance(raw, list):
         return [], "provider_error"
@@ -93,16 +144,23 @@ def metrics_for_request(payload, names, aggregation):
                 continue
         if points:
             unit = item.get("unit")
+            saved_points = [{"timestamp": timestamp, "value": points[timestamp]} for timestamp in sorted(points)[-25:]]
+            analysis = metric_analysis(saved_points, collected_at)
             by_name[name] = {
                 "name": name,
                 "unit": unit[:40] if isinstance(unit, str) else None,
                 "aggregation": aggregation.lower(),
-                "points": [{"timestamp": timestamp, "value": points[timestamp]} for timestamp in sorted(points)[-25:]],
+                "points": saved_points,
+                "analysis": analysis,
+                "recommendation": (
+                    f"Review the latest {name} sample in Azure Monitor; it differs materially from the preceding saved samples."
+                    if analysis and analysis["anomaly"] else None
+                ),
             }
     return [by_name[name] for name in names if name in by_name], "synced" if by_name else "no_data"
 
 
-async def collect_resource(resource, http, semaphore, headers, timespan):
+async def collect_resource(resource, http, semaphore, headers, timespan, collected_at):
     row = {key: resource.get(key, "") for key in ("id", "name", "type", "location")}
     resource_id = row["id"]
     if (not isinstance(resource_id, str) or len(resource_id) > 2048
@@ -117,15 +175,37 @@ async def collect_resource(resource, http, semaphore, headers, timespan):
         http, semaphore, f"{url}/providers/Microsoft.ResourceHealth/availabilityStatuses/current",
         {"api-version": RESOURCE_HEALTH_API_VERSION}, headers,
     )
+    definitions_call = request_json(
+        http, semaphore, f"{url}/providers/microsoft.insights/metricDefinitions",
+        {"api-version": METRIC_DEFINITIONS_API_VERSION}, headers,
+    ) if profiles else None
+    if definitions_call:
+        (health_status, health_document), (definition_status, definition_payload) = await asyncio.gather(
+            health_call, definitions_call,
+        )
+        definitions = metric_definitions(definition_payload) if definition_status == "synced" else None
+        if definitions is None and definition_status == "synced":
+            definition_status = "provider_error"
+    else:
+        health_status, health_document = await health_call
+        definition_status, definitions = "unsupported", {}
+
+    supported_profiles = {
+        aggregation: tuple(name for name in names if name.casefold() in definitions and (
+            not definitions[name.casefold()] or aggregation.casefold() in definitions[name.casefold()]
+        ))
+        for aggregation, names in profiles.items()
+    } if definitions is not None else {}
+    supported_profiles = {aggregation: names for aggregation, names in supported_profiles.items() if names}
     metric_calls = [
         request_json(
             http, semaphore, f"{url}/providers/microsoft.insights/metrics",
             {"api-version": AzureMonitorAdapter.METRICS_API_VERSION, "metricnames": ",".join(names),
              "timespan": timespan, "interval": "PT1H", "aggregation": aggregation}, headers,
         )
-        for aggregation, names in profiles.items()
+        for aggregation, names in supported_profiles.items()
     ]
-    (health_status, health_document), *responses = await asyncio.gather(health_call, *metric_calls)
+    responses = await asyncio.gather(*metric_calls)
     health_values = {"available": "available", "degraded": "degraded", "unavailable": "unavailable", "unknown": "unknown"}
     properties = health_document.get("properties")
     health = health_values.get(str(properties.get("availabilityState")).casefold()) if isinstance(properties, dict) else None
@@ -133,11 +213,13 @@ async def collect_resource(resource, http, semaphore, headers, timespan):
         health_status = "no_data"
 
     metrics, metric_states = [], []
-    for (aggregation, names), (state, payload) in zip(profiles.items(), responses):
+    for (aggregation, names), (state, payload) in zip(supported_profiles.items(), responses):
         if state == "synced":
-            parsed, state = metrics_for_request(payload, names, aggregation)
+            parsed, state = metrics_for_request(payload, names, aggregation, collected_at)
             metrics.extend(parsed)
         metric_states.append(state)
+    if not metric_states:
+        metric_states.append(definition_status if definition_status != "synced" else "unsupported")
     metrics_status = summarize_states(metric_states)
     if metrics_status == "synced" and not metrics:
         metrics_status = "no_data" if "no_data" in metric_states else "unsupported"
@@ -152,10 +234,11 @@ async def collect_telemetry(resources, http, headers):
     timespan = AzureMonitorAdapter()._format_timespan(start_time=start, end_time=end)
     semaphore = asyncio.Semaphore(CONCURRENCY)
     observations = await asyncio.gather(*(
-        collect_resource(resource, http, semaphore, headers, timespan) for resource in resources[:MAX_RESOURCES]
+        collect_resource(resource, http, semaphore, headers, timespan, end) for resource in resources[:MAX_RESOURCES]
     ))
     limitations = [
         "Azure Resource Health and platform metric support varies by resource type and Azure permissions.",
+        "Metric definitions are checked per resource before supported counters are requested.",
         "Metrics cover the previous 24 hours at hourly intervals. Network counters report volume only.",
     ]
     if len(resources) > MAX_RESOURCES:

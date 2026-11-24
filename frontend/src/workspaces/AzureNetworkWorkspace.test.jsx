@@ -40,6 +40,9 @@ describe("Azure network workspace", () => {
   it("renders evidence and topology only for links that Azure configuration returned", async () => {
     render(<AzureNetworkWorkspace canRefresh={false} />);
     expect(await screen.findByText("Network configuration does not provide observed traffic.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Network posture from collected configuration" })).toBeInTheDocument();
+    expect(screen.getByText(/Connectivity is not validated/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Subnets without observed NSG link" }).nextSibling).toHaveTextContent("1");
     expect(screen.getByTestId("topology")).toHaveTextContent("2 nodes, 1 links");
     const table = within(screen.getByRole("table"));
     expect(table.getByRole("cell", { name: "VNet" })).toBeInTheDocument();
@@ -58,7 +61,7 @@ describe("Azure network workspace", () => {
     render(<AzureNetworkWorkspace canRefresh />);
     await screen.findByRole("heading", { name: "VNet" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
-    expect(await screen.findByText("Showing the last available data.")).toBeInTheDocument();
+    expect(await screen.findByText(/Showing the last available data/)).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "App subnet" })).toBeInTheDocument();
     expect(refreshAzureNetwork).toHaveBeenCalledWith(SUBSCRIPTION);
   });

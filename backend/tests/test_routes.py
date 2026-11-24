@@ -43,6 +43,15 @@ def test_azure_capabilities_and_patterns_are_local_and_typed(client: TestClient)
     assert invalid["valid"] is False
     assert invalid["status"] == "INVALID"
 
+    hosting = classify_relationship_rule("appservice", "appserviceplan", "hosted_on")
+    assert hosting == {"valid": True, "status": "VALID", "reason": None, "kind": "hosting"}
+    containment = classify_relationship_rule("vnet", "subnet", "contains")
+    assert containment["kind"] == "containment"
+    integration = classify_relationship_rule("privateendpoint", "storage", "private_link")
+    assert integration["valid"] is True and integration["kind"] == "integration"
+    traffic = classify_relationship_rule("gateway", "appservice", "traffic_flow")
+    assert traffic["valid"] is True and traffic["kind"] == "traffic"
+
     unknown = classify_relationship_rule("future-service", "sql", "connects_to")
     assert unknown["valid"] is True
     assert unknown["status"] == "UNKNOWN"

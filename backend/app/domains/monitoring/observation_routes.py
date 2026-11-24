@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.access.azure import connection_values, select_subscription
+from app.domains.access.azure import connection_values, request_correlation_id, select_subscription
 from app.domains.access.models import AzureConnection
 from app.domains.access.routes import audit, client_access, client_admin, get_db
 from .health_alerts import attach_health_alerts
@@ -33,6 +33,11 @@ class ObservationRead(BaseModel):
     findings: list[dict] = Field(default_factory=list)
     score: int | None = None
     score_factors: list[dict] = Field(default_factory=list)
+    failure_stage: str | None = None
+    failure_reason: str | None = None
+    correlation_id: str | None = None
+    showing_retained_data: bool = False
+    evidence_freshness: str = "unavailable"
 
 
 class ScheduleWrite(BaseModel):
@@ -46,23 +51,48 @@ class ScheduleRead(ScheduleWrite):
     next_run_at: datetime | None = None
 
 
-async def observation_read(db, snapshot, selected):
+def observation_failure_stage(status):
+    if status == "inventory_required":
+        return "inventory"
+    if status in {"authentication_failure", "configuration_error"}:
+        return "token_acquisition"
+    if status in {"permission_failure", "provider_error", "partial_failure"}:
+        return "azure_collection"
+    return None
+
+
+async def observation_read(db, snapshot, selected, request=None):
     if snapshot is None:
-        return ObservationRead(subscription_id=selected, status="not_synced" if selected else "not_configured")
+        status = "not_synced" if selected else "not_configured"
+        return ObservationRead(subscription_id=selected, status=status,
+                               failure_stage="inventory" if selected else "connection",
+                               failure_reason=status, correlation_id=request_correlation_id(request))
     payload = await attach_tracking(db, snapshot, snapshot.payload)
     payload = await attach_health_alerts(db, snapshot, payload)
+    retained = bool(snapshot.last_success_at and snapshot.status != "synced")
+    if retained:
+        freshness = "retained"
+    elif snapshot.status != "synced" or not snapshot.last_success_at:
+        freshness = "incomplete"
+    else:
+        age = datetime.now(timezone.utc) - snapshot.last_success_at
+        freshness = "stale" if age.total_seconds() > 86400 else "recent"
     return ObservationRead(
         subscription_id=selected, status=snapshot.status, last_attempt_at=snapshot.last_attempt_at,
         last_success_at=snapshot.last_success_at, limitations=snapshot.limitations, **payload,
+        failure_stage=observation_failure_stage(snapshot.status),
+        failure_reason=snapshot.status if snapshot.status != "synced" else None,
+        correlation_id=request_correlation_id(request), showing_retained_data=retained,
+        evidence_freshness=freshness,
     )
 
 
 @router.get("/{kind}", response_model=ObservationRead)
-async def read_observation(kind: ObservationKind, subscription_id: UUID | None = None,
+async def read_observation(kind: ObservationKind, request: Request, subscription_id: UUID | None = None,
                            client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
     selected = select_subscription(await connection_values(db, client_id), subscription_id)
     snapshot = await db.get(AzureObservation, (client_id, UUID(selected), kind)) if selected else None
-    return await observation_read(db, snapshot, selected)
+    return await observation_read(db, snapshot, selected, request)
 
 
 @router.post("/{kind}/refresh", response_model=ObservationRead)
@@ -70,7 +100,7 @@ async def refresh_observation(kind: ObservationKind, request: Request, subscript
                               client_id: UUID = Depends(client_access), db: AsyncSession = Depends(get_db)):
     snapshots = await refresh_observations(db, client_id, subscription_id, (kind,), request)
     snapshot = snapshots.get(kind)
-    return await observation_read(db, snapshot, snapshot.subscription_id if snapshot else None)
+    return await observation_read(db, snapshot, snapshot.subscription_id if snapshot else None, request)
 
 
 @router.get("/monitoring/schedule", response_model=ScheduleRead)

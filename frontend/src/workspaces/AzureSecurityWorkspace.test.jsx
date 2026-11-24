@@ -96,7 +96,7 @@ describe("Azure Security workspace", () => {
     await screen.findByText("41 / 100");
     fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     expect(await screen.findByText("Some Azure data could not be collected.")).toBeInTheDocument();
-    expect(screen.getByText("Showing the last available data.")).toBeInTheDocument();
+    expect(screen.getByText(/Showing the last available data/)).toBeInTheDocument();
     expect(screen.getByText("Triage is based on retained findings from the last complete collection.")).toBeInTheDocument();
     expect(screen.getByText("Broad inbound NSG rule")).toBeInTheDocument();
     await waitFor(() => expect(refreshAzureSecurity).toHaveBeenCalledWith(SUBSCRIPTION));

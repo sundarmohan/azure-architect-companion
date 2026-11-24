@@ -28,6 +28,66 @@ function getSummary(snapshots) {
   ];
 }
 
+function dueState(dueDate) {
+  if (!dueDate) return "Unscheduled";
+  const end = new Date(`${dueDate}T23:59:59`);
+  return Number.isFinite(end.getTime()) && end < new Date() ? `Overdue · ${dueDate}` : `Due ${dueDate}`;
+}
+
+export function getPriorities(snapshots) {
+  const priorities = [];
+  const add = (priority) => priorities.push({ owner: "Unassigned", due: null, ...priority });
+  for (const [key, label] of [["inventory", "Inventory"], ["monitoring", "Monitoring"], ["security", "Security"]]) {
+    const snapshot = snapshots[key];
+    if (!snapshot) {
+      add({ id: `${key}-unavailable`, title: `${label} evidence could not be loaded`, source: label,
+        freshness: "Unavailable", impact: "Operational visibility is incomplete", workspace: key });
+    } else if (snapshot.status && snapshot.status !== "synced") {
+      add({ id: `${key}-${snapshot.status}`, title: `${label} collection requires attention`, source: label,
+        freshness: snapshot.last_success_at ? `Retained from ${snapshotTime(snapshot.last_success_at)}` : "No complete evidence",
+        impact: displayLabel(snapshot.status), workspace: key });
+    }
+  }
+
+  const incidents = snapshots.incidents?.incidents || [];
+  const incidentResources = new Set(incidents.filter(({ status }) => status !== "resolved").map(({ resource_id }) => resource_id));
+  for (const resource of snapshots.monitoring?.resources || []) {
+    if (resource.health_status === "synced" && ["degraded", "unavailable"].includes(resource.health)
+        && !incidentResources.has(resource.id)) {
+      add({ id: `health-${resource.id}`, title: `${resource.name || resource.id} is ${resource.health}`,
+        source: "Azure Resource Health", freshness: snapshotTime(snapshots.monitoring.last_success_at),
+        impact: resource.health === "unavailable" ? "Service unavailable" : "Service degraded", workspace: "monitoring" });
+    }
+  }
+  for (const incident of incidents.filter(({ status }) => status !== "resolved")) {
+    add({ id: `incident-${incident.id}`, title: `Investigate ${incident.resource_id}`,
+      source: "Health incident", freshness: snapshotTime(incident.collected_at), impact: displayLabel(incident.health),
+      owner: incident.owner || "Unassigned", workspace: "monitoring" });
+  }
+  for (const finding of snapshots.security?.findings || []) {
+    const tracking = finding.tracking;
+    if (!tracking || !["resolved", "accepted"].includes(tracking.status)) {
+      add({ id: `security-${finding.id}`, title: finding.title || "Security finding requires review",
+        source: finding.source || "Security evidence", freshness: snapshotTime(finding.observed_at || snapshots.security.last_success_at),
+        impact: displayLabel(finding.severity || "Review required"), owner: tracking?.owner || "Unassigned",
+        due: tracking?.due_date || null, workspace: "security" });
+    }
+  }
+  for (const review of Array.isArray(snapshots.compliance) ? snapshots.compliance : []) {
+    if (review.state === "action_required" || (review.action && review.action_status !== "completed")) {
+      add({ id: `compliance-${review.topic}`, title: review.action || `${displayLabel(review.topic)} review requires action`,
+        source: "Compliance review", freshness: snapshotTime(review.evidence_at || review.updated_at),
+        impact: displayLabel(review.state), owner: review.owner || "Unassigned", due: review.due_date || null,
+        workspace: "compliance" });
+    }
+  }
+  return priorities.sort((left, right) => {
+    const leftOverdue = dueState(left.due).startsWith("Overdue") ? 0 : 1;
+    const rightOverdue = dueState(right.due).startsWith("Overdue") ? 0 : 1;
+    return leftOverdue - rightOverdue || left.title.localeCompare(right.title);
+  });
+}
+
 function downloadSummary(clientName, subscription, snapshots, metrics) {
   const report = {
     client: clientName, subscription, generated_at: new Date().toISOString(),
@@ -66,7 +126,22 @@ function SubscriptionDashboard({ clientName, subscription, onOpen }) {
   if (!snapshots) return <p role="status">Loading saved subscription evidence...</p>;
 
   const metrics = getSummary(snapshots);
+  const priorities = getPriorities(snapshots);
   return <>
+    <section className="card account-form">
+      <h2>Priority work queue</h2>
+      <p>Priorities below come only from saved collection, finding, incident, and compliance evidence.</p>
+      {priorities.length ? <div className="design-table"><table className="table" aria-label="Evidence-backed priorities">
+        <thead><tr><th scope="col">Priority</th><th scope="col">Evidence</th><th scope="col">Impact</th><th scope="col">Ownership</th><th scope="col">Action</th></tr></thead>
+        <tbody>{priorities.map((priority) => <tr key={priority.id}>
+          <td>{priority.title}</td>
+          <td>{priority.source}<br /><small>{priority.freshness}</small></td>
+          <td>{priority.impact}</td>
+          <td>{priority.owner}<br /><small>{dueState(priority.due)}</small></td>
+          <td><button type="button" onClick={() => onOpen(priority.workspace)}>Open {displayLabel(priority.workspace)}</button></td>
+        </tr>)}</tbody>
+      </table></div> : <p>No evidence-backed priorities are currently recorded.</p>}
+    </section>
     <div className="platform-grid">
       {metrics.map(([label, value, key]) => (
         <article className="platform-card" key={label}>

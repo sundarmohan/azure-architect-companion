@@ -24,7 +24,7 @@ it("records append-only restore exercise evidence", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Record restore test" }));
 
   await waitFor(() => expect(recordAzureRestoreTest).toHaveBeenCalledWith("sub-a", expect.any(String), {
-    resource_name: "Finance VM", tested_at: "2026-11-01T10:00:00.000Z", outcome: "passed",
+    resource_name: "Finance VM", tested_at: new Date(2026, 10, 1, 10).toISOString(), outcome: "passed",
     recovery_minutes: 45, evidence_reference: "change-1042", notes: null,
   }));
   expect(await screen.findByText("Restore test evidence recorded.")).toBeInTheDocument();

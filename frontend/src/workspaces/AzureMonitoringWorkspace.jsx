@@ -36,6 +36,16 @@ function MetricSeries({ metric }) {
   return <details className="metric-series">
     <summary><strong>{metric.name}</strong><span>{latest ? formatMetric(latest.value, metric.unit) : "No data"}</span></summary>
     {metric.aggregation && <p>Aggregation {displayLabel(metric.aggregation)}</p>}
+    {metric.analysis && <dl className="design-meta">
+      <div><dt>Trend</dt><dd>{displayLabel(metric.analysis.direction)}</dd></div>
+      <div><dt>Evidence freshness</dt><dd>{displayLabel(metric.analysis.freshness)}</dd></div>
+      <div><dt>Samples</dt><dd>{metric.analysis.sample_count}</dd></div>
+      <div><dt>Minimum</dt><dd>{formatMetric(metric.analysis.minimum, metric.unit)}</dd></div>
+      <div><dt>Average</dt><dd>{formatMetric(metric.analysis.average, metric.unit)}</dd></div>
+      <div><dt>Maximum</dt><dd>{formatMetric(metric.analysis.maximum, metric.unit)}</dd></div>
+    </dl>}
+    {metric.analysis?.anomaly && <p className="error">Anomaly detected from the preceding saved samples.</p>}
+    {metric.recommendation && <p><strong>Recommended review:</strong> {metric.recommendation}</p>}
     {latest && <>
       <p>Latest sample {snapshotTime(latest.timestamp)}</p>
       {points.length > 1 && <svg className="monitoring-trend" viewBox="0 0 100 50" preserveAspectRatio="none" aria-hidden="true">
@@ -172,7 +182,7 @@ function MonitoringResources({ snapshot, subscription, canAcknowledge, onAcknowl
         </dl>
         {selected.metrics?.length ? <div className="account-form" key={selected.id}>{selected.metrics.map((metric) =>
           <MetricSeries key={`${metric.name}-${metric.aggregation || ""}`} metric={metric} />)}</div>
-          : <p>No metrics were returned for this resource.</p>}
+          : <p>No confirmed metrics were returned for this resource. Metrics collection state: {displayLabel(selected.metrics_status)}.</p>}
       </div> : <p>{resources.length ? "No resources match the filter." : "No monitoring data has been collected."}</p>}
     </section>
   </>;

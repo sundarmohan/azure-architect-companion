@@ -173,6 +173,9 @@ class AzureDiscoveryRead(BaseModel):
     resources_created: int = 0
     resources_updated: int = 0
     hierarchy_links_updated: int = 0
+    relationships_created: int = 0
+    relationships_updated: int = 0
+    unresolved_relationships: int = 0
     unsupported_resources: int = 0
     skipped_without_group: int = 0
     normalized_resources: list[AzureDiscoveredResource] = Field(default_factory=list)

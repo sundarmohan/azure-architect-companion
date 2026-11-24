@@ -2,7 +2,9 @@ import asyncio
 
 import httpx
 
-from app.domains.monitoring.telemetry import collect_telemetry
+from datetime import datetime, timezone
+
+from app.domains.monitoring.telemetry import collect_telemetry, metric_analysis
 
 
 VM = {
@@ -23,6 +25,11 @@ def test_collects_health_and_separates_average_from_total_counters():
         calls.append(request.url)
         if request.url.path.endswith("/current"):
             return httpx.Response(200, json={"properties": {"availabilityState": "Available"}})
+        if request.url.path.endswith("/metricDefinitions"):
+            return httpx.Response(200, json={"value": [
+                {"name": {"value": "Percentage CPU"}, "supportedAggregationTypes": ["Average"]},
+                {"name": {"value": "Network In Total"}, "supportedAggregationTypes": ["Total"]},
+            ]})
         aggregate = request.url.params["aggregation"]
         assert request.url.params["interval"] == "PT1H"
         name = "Percentage CPU" if aggregate == "Average" else "Network In Total"
@@ -47,7 +54,10 @@ def test_collects_health_and_separates_average_from_total_counters():
     resource = payload["resources"][0]
     assert resource["health"] == "available"
     assert resource["metrics_status"] == "synced"
-    assert len(calls) == 3
+    assert len(calls) == 4
+    metric_urls = [url for url in calls if url.path.endswith("/metrics")]
+    assert all("Available Memory Bytes" not in url.params["metricnames"] for url in metric_urls)
+    assert all("Network Out Total" not in url.params["metricnames"] for url in metric_urls)
     assert [(metric["name"], metric["aggregation"], metric["points"][0]["value"])
             for metric in resource["metrics"]] == [
         ("Percentage CPU", "average", 42), ("Network In Total", "total", 42),
@@ -62,6 +72,10 @@ def test_returns_partial_health_and_never_follows_invalid_inventory_paths():
         calls.append(request.url)
         if request.url.path.endswith("/current"):
             return httpx.Response(200, json={"properties": {"availabilityState": "Degraded"}})
+        if request.url.path.endswith("/metricDefinitions"):
+            return httpx.Response(200, json={"value": [
+                {"name": {"value": "Percentage CPU"}, "supportedAggregationTypes": ["Average"]},
+            ]})
         return httpx.Response(403, json={"message": "untrusted upstream detail"})
 
     async def read():
@@ -77,3 +91,18 @@ def test_returns_partial_health_and_never_follows_invalid_inventory_paths():
     assert invalid["health_status"] == "unsupported"
     assert len(calls) == 3
     assert "untrusted upstream detail" not in str(payload)
+
+
+def test_metric_analysis_is_deterministic_and_evidence_bound():
+    collected_at = datetime(2026, 11, 24, 12, tzinfo=timezone.utc)
+    points = [
+        {"timestamp": f"2026-11-24T{hour:02d}:00:00+00:00", "value": value}
+        for hour, value in zip(range(6, 12), [10, 10, 10, 10, 10, 30])
+    ]
+
+    analysis = metric_analysis(points, collected_at)
+
+    assert analysis["sample_count"] == 6
+    assert analysis["direction"] == "increasing"
+    assert analysis["freshness"] == "recent"
+    assert analysis["anomaly"] is True

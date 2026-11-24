@@ -63,6 +63,37 @@ class _FakeAdapterSuccess:
                     "parent_azure_resource_id": None,
                     "properties": {"provisioningState": "Succeeded"},
                 },
+                {
+                    "azure_resource_id": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Web/serverfarms/plan-live",
+                    "azure_resource_type": "Microsoft.Web/serverfarms", "resource_type": "appserviceplan",
+                    "name": "plan-live", "location": "eastus", "resource_group_name": "rg-live",
+                    "subscription_id": subscription_id, "sku": "P1v3", "parent_azure_resource_id": None,
+                    "properties": {},
+                },
+                {
+                    "azure_resource_id": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Web/sites/app-live",
+                    "azure_resource_type": "Microsoft.Web/sites", "resource_type": "appservice",
+                    "name": "app-live", "location": "eastus", "resource_group_name": "rg-live",
+                    "subscription_id": subscription_id, "sku": None, "parent_azure_resource_id": None,
+                    "properties": {"serverFarmId": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Web/serverfarms/plan-live"},
+                },
+                {
+                    "azure_resource_id": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Storage/storageAccounts/storelive",
+                    "azure_resource_type": "Microsoft.Storage/storageAccounts", "resource_type": "storage",
+                    "name": "storelive", "location": "eastus", "resource_group_name": "rg-live",
+                    "subscription_id": subscription_id, "sku": "Standard_LRS", "parent_azure_resource_id": None,
+                    "properties": {},
+                },
+                {
+                    "azure_resource_id": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Network/privateEndpoints/pe-live",
+                    "azure_resource_type": "Microsoft.Network/privateEndpoints", "resource_type": "privateendpoint",
+                    "name": "pe-live", "location": "eastus", "resource_group_name": "rg-live",
+                    "subscription_id": subscription_id, "sku": None, "parent_azure_resource_id": None,
+                    "properties": {
+                        "subnet": {"id": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Network/virtualNetworks/vnet-live/subnets/subnet-live"},
+                        "privateLinkServiceConnections": [{"properties": {"privateLinkServiceId": "/subscriptions/sub-1/resourceGroups/rg-live/providers/Microsoft.Storage/storageAccounts/storelive"}}],
+                    },
+                },
             ],
             "unsupported_resources": 1,
             "skipped_without_group": 0,
@@ -183,9 +214,10 @@ def test_discovery_success_duplicate_safety_and_hierarchy(monkeypatch):
         assert payload["connection_state"] == "configured_connected"
         assert payload["discovered_subscription_name"] == "Discovered Subscription"
         assert payload["resource_groups_created"] == 1
-        assert payload["resources_created"] == 3
+        assert payload["resources_created"] == 7
+        assert payload["relationships_created"] == 4
         assert payload["unsupported_resources"] == 1
-        assert len(payload["normalized_resources"]) == 3
+        assert len(payload["normalized_resources"]) == 7
 
         subscriptions = client.get(f"/api/architectures/{architecture['id']}/subscriptions")
         assert subscriptions.status_code == 200
@@ -198,7 +230,7 @@ def test_discovery_success_duplicate_safety_and_hierarchy(monkeypatch):
 
         resources_first = client.get(f"/api/architectures/{architecture['id']}/resources")
         assert resources_first.status_code == 200
-        assert len(resources_first.json()) == 3
+        assert len(resources_first.json()) == 7
 
         second = client.post(
             f"/api/architectures/{architecture['id']}/discover-resources",
@@ -213,11 +245,20 @@ def test_discovery_success_duplicate_safety_and_hierarchy(monkeypatch):
         resources_second = client.get(f"/api/architectures/{architecture['id']}/resources")
         assert resources_second.status_code == 200
         items = resources_second.json()
-        assert len(items) == 3
+        assert len(items) == 7
 
         vnet = next(item for item in items if item["resource_type"] == "vnet")
         subnet = next(item for item in items if item["resource_type"] == "subnet")
         assert subnet["parent_resource_id"] == vnet["id"]
+        by_type = {item["resource_type"]: item for item in items}
+        relationships = client.get(f"/api/architectures/{architecture['id']}/relationships").json()
+        relationship_types = {
+            (item["source_resource_id"], item["target_resource_id"], item["relationship_type"])
+            for item in relationships
+        }
+        assert (by_type["appservice"]["id"], by_type["appserviceplan"]["id"], "hosted_on") in relationship_types
+        assert (by_type["subnet"]["id"], by_type["privateendpoint"]["id"], "contains") in relationship_types
+        assert (by_type["privateendpoint"]["id"], by_type["storage"]["id"], "private_link") in relationship_types
 
         cleanup = client.delete(f"/api/architectures/{architecture['id']}")
         assert cleanup.status_code == 204
